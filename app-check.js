@@ -1143,8 +1143,8 @@ function renderMarket(role){
   if(!wrap) return;
   const live = state.admin.market.filter(m => m.status !== 'Sold');
   wrap.innerHTML = `
-    <div class="market-hero"><div><h2 class="section-title">Marketplace</h2><p class="section-sub">Discover polished APIs, send purchase requests, and expand your toolkit with just a few clicks.</p></div><span class="market-badge">${live.length} live listing${live.length!==1?'s':''}</span></div>
-    ${role==='free' ? `<div class="card" style="padding:14px 16px;margin-bottom:14px;"><b>Free user notice:</b> You can buy listed APIs, but only Pro users can sell their own created APIs.</div>` : `<div class="card" style="padding:14px 16px;margin-bottom:14px;"><b>Pro seller mode:</b> Create an API in "My APIs" and list it here using the sell button.</div>`}
+    <div class="market-hero"><div><h2 class="section-title">Marketplace</h2><p class="section-sub">Buy listed APIs directly. After purchase, ownership transfers to the buyer immediately.</p></div><span class="market-badge">${live.length} live listing${live.length!==1?'s':''}</span></div>
+    ${role==='free' ? `<div class="card" style="padding:14px 16px;margin-bottom:14px;"><b>Free user notice:</b> You can buy listed APIs directly, but only Pro users can sell their own created APIs.</div>` : `<div class="card" style="padding:14px 16px;margin-bottom:14px;"><b>Pro seller mode:</b> Create an API in "My APIs" and list it here using the sell button. Buyers can purchase it directly.</div>`}
     ${live.length===0 ? `<div class="card" style="padding:20px;text-align:center;color:rgba(18,36,28,.5);">No listings yet.</div>` : live.map(m=>`
       <div class="card api-row">
         <div style="flex:1;min-width:160px;">
@@ -1154,9 +1154,7 @@ function renderMarket(role){
           <div class="market-seller-chip">Seller email: ${escapeHtml(m.seller)}</div>
         </div>
         <div class="mono" style="font-weight:700;">$${m.price}</div>
-        ${m.status === 'Pending approval'
-          ? `<button class="btn btn-soft small-btn" disabled>Pending approval</button>`
-          : `<button class="btn btn-clay small-btn" onclick="buyApi('${role}', '${m.id}')">Send buy request</button>`}
+        <button class="btn btn-clay small-btn" onclick="buyApi('${role}', '${m.id}')">Buy directly</button>
       </div>
     `).join('')}
   `;
@@ -1173,24 +1171,43 @@ function buyApi(role, listingId){
     showToast('This API has already been sold.');
     return;
   }
-  const ok = confirm(`Send $${item.price} equivalent via bKash "Send Money", then tap OK to notify admin for approval.`);
-  if(ok){
-    const txn = {id:'TXN-'+Math.floor(3000+Math.random()*900), user: buyerEmail, buyer: buyerEmail, buyerRole:role, seller: item.seller, apiName: item.api, listingId: item.id, plan:'API Purchase — '+item.api, amount:'$'+item.price, method:'bKash Send Money', date:todayISO(), requestType:'Marketplace API Purchase'};
-    state.admin.pending.push(txn);
-    item.status = 'Pending approval';
-    item.pendingBuyer = buyerEmail;
-    item.pendingTxnId = txn.id;
-    upsertSellerTransaction(item.seller, {api:item.api, buyer:buyerEmail, price:item.price, method:'bKash Send Money', date:todayISO(), status:'Pending admin approval', listingId:item.id, txnId:txn.id});
-    const sellerProfile = userStore['pro:'+item.seller.toLowerCase()];
-    if(sellerProfile){
-      sellerProfile.messages = sellerProfile.messages || [];
-      sellerProfile.messages.unshift({from:'Marketplace', body:`${buyerEmail} has requested to buy your API "${item.api}". The request is now waiting for admin approval.`});
-    }
-    saveAppData();
-    pushPendingToBackend(txn);
-    renderPending(); renderAdminMarket(); renderMarket('free'); renderMarket('pro');
-    showToast('Buy request submitted — pending admin approval');
-  }
+
+  const ok = confirm(`Buy "${item.api}" for $${item.price}? Payment method: bKash Send Money. After OK, ownership will transfer directly to your account.`);
+  if(!ok) return;
+
+  const txn = {
+    id:'TXN-'+Math.floor(3000+Math.random()*900),
+    user: buyerEmail,
+    buyer: buyerEmail,
+    buyerRole: role,
+    seller: item.seller,
+    apiName: item.api,
+    listingId: item.id,
+    plan:'Direct Marketplace Sale — '+item.api,
+    amount:'$'+item.price,
+    method:'bKash Send Money',
+    date:todayISO(),
+    requestType:'Direct Marketplace Sale',
+    status:'Sold'
+  };
+
+  deliverPurchasedApi(buyerEmail, item.api, txn);
+
+  const buyerKey = role + ':' + buyerEmail.toLowerCase();
+  const buyerProfile = userStore[buyerKey] || freshProfile(role, buyerEmail);
+  buyerProfile.messages = buyerProfile.messages || [];
+  buyerProfile.messages.unshift({from:'Marketplace', body:`You bought "${item.api}". Ownership has been transferred to you.`});
+  userStore[buyerKey] = buyerProfile;
+
+  state.admin.approved.unshift({...txn, status:'Direct Sale Completed'});
+
+  saveAppData();
+  renderMyApis(role);
+  renderMarket('free');
+  renderMarket('pro');
+  renderAdminMarket();
+  renderApproved();
+  showToast('API sold directly — ownership transferred');
 }
 
 /* ==================== ADMIN ==================== */
@@ -1351,49 +1368,31 @@ function renderApproved(){
 }
 function renderAdminMarket(){
   const wrap = document.getElementById('admin-market-area');
-  const purchaseRequests = state.admin.pending
-    .map((t,i)=>({...t, index:i}))
-    .filter(t => /^API Purchase — /.test(t.plan || '') || t.requestType === 'Marketplace API Purchase');
-
   wrap.innerHTML = `
   <div class="flex-between" style="margin-bottom:12px;">
     <div>
-      <h2 class="section-title" style="margin:0 0 2px;">Marketplace Buying Request Approvals</h2>
-      <p class="section-sub" style="margin:0;">Approve or reject marketplace ownership transfer requests.</p>
+      <h2 class="section-title" style="margin:0 0 2px;">Marketplace Overview</h2>
+      <p class="section-sub" style="margin:0;">Marketplace sales are direct now. No admin approval is required for buying.</p>
     </div>
-    <button class="btn btn-soft small-btn" onclick="adminRefresh()">↻ Reload marketplace requests</button>
+    <button class="btn btn-soft small-btn" onclick="adminRefresh()">↻ Reload marketplace</button>
   </div>
-  <div class="card" style="padding:6px 0;overflow-x:auto;margin-bottom:18px;"><table>
-    <tr><th>Txn ID</th><th>Requester</th><th>Buyer mail</th><th>Seller</th><th>API</th><th>Amount</th><th>Method</th><th>Date</th><th>Status</th><th>Action</th></tr>
-    ${purchaseRequests.length ? purchaseRequests.map(t=>`<tr>
-      <td class="mono">${t.id}</td>
-      <td>${escapeHtml(t.buyer || t.user)}</td>
-      <td>${escapeHtml(t.buyer || t.user)}</td>
-      <td>${escapeHtml(t.seller || '—')}</td>
-      <td>${escapeHtml(t.apiName || (t.plan || '').replace('API Purchase — ',''))}</td>
-      <td>${escapeHtml(t.amount || '—')}</td>
-      <td>${escapeHtml(t.method || '—')}</td>
-      <td>${escapeHtml(t.date || '—')}</td>
-      <td><span class="status-chip">Pending admin approval</span></td>
-      <td><button class="btn btn-primary small-btn" onclick="approveTxn(${t.index})">Approve</button> <button class="btn btn-ghost small-btn" onclick="rejectTxn(${t.index})">Reject</button></td>
-    </tr>`).join('') : `<tr><td colspan="10" style="text-align:center;color:rgba(18,36,28,.5);padding:22px;">No marketplace buying requests right now.</td></tr>`}
-  </table></div>
 
   <h2 class="section-title" style="margin-bottom:2px;">Marketplace Listings</h2>
-  <p class="section-sub">Live shelf items, pending items, and platform fees.</p>
+  <p class="section-sub">Live shelf items, sold items, owners, and platform fees.</p>
   <div class="card" style="padding:6px 0;overflow-x:auto;"><table>
-    <tr><th>Seller</th><th>Current owner</th><th>API</th><th>Price</th><th>Status</th><th>Pending buyer / Sold to</th><th>Units sold</th><th>Platform fee (10%)</th></tr>
+    <tr><th>Seller</th><th>Current owner</th><th>API</th><th>Price</th><th>Status</th><th>Sold to</th><th>Sold date</th><th>Units sold</th><th>Platform fee (10%)</th></tr>
     ${state.admin.market.length ? state.admin.market.map(m=>`<tr>
       <td>${escapeHtml(m.seller)}</td>
       <td>${escapeHtml(m.owner || m.seller)}</td>
       <td>${escapeHtml(m.api)}</td>
       <td>$${m.price}</td>
       <td><span class="status-chip ${m.status==='Sold'?'status-approved':''}">${escapeHtml(m.status || 'On shelf')}</span></td>
-      <td>${escapeHtml(m.pendingBuyer || m.soldTo || '—')}</td>
+      <td>${escapeHtml(m.soldTo || '—')}</td>
+      <td>${escapeHtml(m.soldDate || '—')}</td>
       <td>${m.sold || 0}</td>
       <td>$${(m.price*0.1).toFixed(2)}</td>
     </tr>`).join('')
-      : `<tr><td colspan="8" style="text-align:center;color:rgba(18,36,28,.5);padding:22px;">No listings yet.</td></tr>`}
+      : `<tr><td colspan="9" style="text-align:center;color:rgba(18,36,28,.5);padding:22px;">No listings yet.</td></tr>`}
   </table></div>`;
 }
 
