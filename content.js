@@ -79,9 +79,68 @@
   function getPageContext(){
     const title = document.title || '';
     const url = location.href;
-    const headings = Array.from(document.querySelectorAll('h1,h2,h3')).map(h=>h.innerText.trim()).filter(Boolean).slice(0, 20).join(' | ');
-    const text = (document.body?.innerText || '').replace(/\s+/g,' ').trim().slice(0, 12000);
-    return `Title: ${title}\nURL: ${url}\nHeadings: ${headings}\nPage text: ${text}`;
+
+    const metaDesc = document.querySelector('meta[name="description"]')?.content || '';
+    const headings = Array.from(document.querySelectorAll('h1,h2,h3'))
+      .map(h=>h.innerText.trim())
+      .filter(Boolean)
+      .slice(0, 50);
+
+    const seen = new Set();
+    const items = [];
+
+    function addItem(text, source='page'){
+      text = String(text || '').replace(/\s+/g,' ').trim();
+      if(!text) return;
+      if(text.length < 3 || text.length > 260) return;
+      const bad = /^(add|buy|cart|login|sign in|menu|search|home|next|previous|view|read more|show more|filter|sort)$/i;
+      if(bad.test(text)) return;
+      const key = text.toLowerCase();
+      if(seen.has(key)) return;
+      seen.add(key);
+      items.push({text, source});
+    }
+
+    // Product/card style blocks.
+    document.querySelectorAll('[class*="product"],[class*="item"],[class*="card"],[class*="grid"],[class*="listing"],li,article').forEach(el=>{
+      const block = (el.innerText || '').replace(/\s+/g,' ').trim();
+      if(block && block.length >= 8 && block.length <= 500){
+        addItem(block.slice(0,260), 'card');
+      }
+    });
+
+    // Links, headings, buttons, image alt labels.
+    document.querySelectorAll('h1,h2,h3,h4,a,button,[aria-label],img[alt]').forEach(el=>{
+      addItem(el.innerText || el.getAttribute('aria-label') || el.getAttribute('alt') || el.getAttribute('title') || '', 'label');
+    });
+
+    // Common structured data names.
+    document.querySelectorAll('[itemprop="name"],[data-product-name],[data-name],[title]').forEach(el=>{
+      addItem(el.getAttribute('data-product-name') || el.getAttribute('data-name') || el.getAttribute('title') || el.innerText, 'structured');
+    });
+
+    const bodyText = (document.body?.innerText || '')
+      .replace(/\s+/g,' ')
+      .trim()
+      .slice(0, 16000);
+
+    const itemText = items.map((x,i)=>`${i+1}. ${x.text}`).slice(0, 260).join('\n');
+
+    return {
+      title,
+      url,
+      items: items.slice(0,260),
+      text: `Title: ${title}
+URL: ${url}
+Meta description: ${metaDesc}
+Headings: ${headings.join(' | ')}
+
+Detected page items / products / options:
+${itemText}
+
+Full page text:
+${bodyText}`
+    };
   }
 
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse)=>{
@@ -95,7 +154,8 @@
       return true;
     }
     if(msg && msg.type === 'APIGARDEN_GET_PAGE_CONTEXT'){
-      sendResponse({ok:true, text:getPageContext(), url:location.href, title:document.title || ''});
+      const ctx = getPageContext();
+      sendResponse({ok:true, text:ctx.text, url:ctx.url, title:ctx.title, items:ctx.items});
       return true;
     }
   });

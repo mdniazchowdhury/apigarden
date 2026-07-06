@@ -73,12 +73,46 @@ function loadAppData(){
     return true;
   }catch(e){ return false; }
 }
-function adminRefresh(){
+
+async function pullAdminFromBackend(){
+  try{
+    const res = await fetch('/api/demo-state');
+    if(!res.ok) return false;
+    const data = await res.json();
+    if(Array.isArray(data.pending)) state.admin.pending = data.pending;
+    if(Array.isArray(data.approved)) state.admin.approved = data.approved;
+    saveAppData();
+    return true;
+  }catch(e){ return false; }
+}
+async function syncAdminToBackend(){
+  try{
+    await fetch('/api/demo-state/sync-admin', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({pending:state.admin.pending, approved:state.admin.approved})
+    });
+    return true;
+  }catch(e){ return false; }
+}
+async function pushPendingToBackend(txn){
+  try{
+    await fetch('/api/demo-state/pending', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(txn)
+    });
+    return true;
+  }catch(e){ return false; }
+}
+
+async function adminRefresh(){
   loadAppData();
+  const synced = await pullAdminFromBackend();
   renderPending();
   renderApproved();
   renderAdminMarket();
-  showToast('Admin requests refreshed');
+  showToast(synced ? 'Website + extension requests refreshed' : 'Admin requests refreshed');
 }
 function notifyUser(email, role, message){
   const key = `${role}:${String(email).toLowerCase()}`;
@@ -326,8 +360,10 @@ function plansHTML(){
 function startUpgrade(plan, amount){
   const proceed = confirm(`Send ${amount} via bKash "Send Money" to 017XX-XXXXXX, then tap OK to notify admin for approval.`);
   if(proceed){
-    state.admin.pending.push({id:'TXN-'+Math.floor(2000+Math.random()*900), user:state.free.email, buyer:state.free.email, plan, amount, method:'bKash Send Money', date:new Date().toISOString().slice(0,10)});
+    const txn = {id:'TXN-'+Math.floor(2000+Math.random()*900), user:state.free.email, buyer:state.free.email, plan, amount, method:'bKash Send Money', date:new Date().toISOString().slice(0,10)};
+    state.admin.pending.push(txn);
     saveAppData();
+    pushPendingToBackend(txn);
     renderPending();
     showToast('Payment submitted — waiting for admin approval');
     closeDrawer();
@@ -1144,6 +1180,7 @@ function rejectTxn(i){
     notifyUser(t.seller, 'pro', {from:'Admin', body:`The purchase request for your API "${t.apiName || t.plan}" from ${buyerEmail} was rejected by admin.`});
   }
   saveAppData();
+  syncAdminToBackend();
   renderPending(); renderApproved(); renderAdminMarket();
   showToast(`Rejected ${t.id}`);
 }
@@ -1179,6 +1216,7 @@ function approveTxn(i){
   }
 
   saveAppData();
+  syncAdminToBackend();
   renderPending(); renderApproved(); renderAdminMarket(); renderMarket('free'); renderMarket('pro');
   showToast(`Approved ${t.id} — update sent to ${buyerEmail}`);
 }

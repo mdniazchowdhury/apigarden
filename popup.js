@@ -40,6 +40,7 @@ function storageGet(){
     chrome.storage.local.get([STORE_KEY], res=>{
       resolve(res[STORE_KEY] || {
         backendUrl:'',
+        session:null,
         users:{},
         admin:{pending:[], approved:[]}
       });
@@ -51,6 +52,48 @@ function storageSet(store){
     chrome.storage.local.set({[STORE_KEY]: store}, resolve);
   });
 }
+
+function backendBase(){
+  return String(state.store?.backendUrl || '').trim().replace(/\/$/, '');
+}
+async function pushPendingToBackend(txn){
+  const base = backendBase();
+  if(!base) return false;
+  try{
+    await fetch(`${base}/api/demo-state/pending`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(txn)
+    });
+    return true;
+  }catch(e){ return false; }
+}
+async function pullAdminFromBackend(){
+  const base = backendBase();
+  if(!base) return false;
+  try{
+    const res = await fetch(`${base}/api/demo-state`);
+    if(!res.ok) return false;
+    const data = await res.json();
+    if(Array.isArray(data.pending)) state.store.admin.pending = data.pending;
+    if(Array.isArray(data.approved)) state.store.admin.approved = data.approved;
+    await save();
+    return true;
+  }catch(e){ return false; }
+}
+async function syncAdminToBackend(){
+  const base = backendBase();
+  if(!base) return false;
+  try{
+    await fetch(`${base}/api/demo-state/sync-admin`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(state.store.admin)
+    });
+    return true;
+  }catch(e){ return false; }
+}
+
 function key(role,email){ return `${role}:${String(email || '').toLowerCase()}`; }
 function freshUser(role,email){
   const seeded = role === 'free' && String(email).toLowerCase() === ISHITA;
@@ -65,10 +108,22 @@ function freshUser(role,email){
 }
 async function load(){
   state.store = await storageGet();
+  if(state.store.session && state.store.session.role && state.store.session.email){
+    state.role = state.store.session.role;
+    state.email = state.store.session.email;
+    state.tab = state.store.session.tab || (state.role === 'admin' ? 'admin' : 'info');
+    state.screen = 'app';
+    if(state.role === 'admin') await pullAdminFromBackend();
+  }
   render();
 }
 async function save(){
   await storageSet(state.store);
+}
+async function saveSession(){
+  if(!state.store) return;
+  state.store.session = state.role && state.email ? {role:state.role, email:state.email, tab:state.tab, screen:state.screen} : null;
+  await save();
 }
 function currentUser(){
   if(!state.role || !state.email) return null;
@@ -97,10 +152,12 @@ function login(role){
   const u = currentUser();
   u.email = email;
   if(role === 'pro' && passEl) u.password = passEl.value;
+  state.store.session = {role, email, tab:state.tab, screen:'app'};
   save().then(()=>setScreen('app'));
 }
-function logout(){
+async function logout(){
   state.screen='landing'; state.role=null; state.email=''; state.tab='info';
+  if(state.store){ state.store.session = null; await save(); }
   render();
 }
 
@@ -252,15 +309,19 @@ function apisView(){
 function upgradeView(){
   return `<div class="card">
     <h2>Upgrade Request</h2>
-    <p>Send a Pro Monthly payment request to admin. Admin can approve/reject from the extension admin panel.</p>
-    <button class="btn primary" data-action="requestUpgrade">Send Pro Monthly Request</button>
+    <p>Send a Pro Monthly payment request to admin. To show this request in the website admin panel, paste the Render backend URL once.</p>
+    <label>Backend URL / Render link</label>
+    <input id="upgrade-backend" value="${esc(state.store.backendUrl || '')}" placeholder="https://your-app.onrender.com">
+    <div class="actions"><button class="btn primary" data-action="requestUpgrade">Send Pro Monthly Request</button></div>
   </div>`;
 }
 function renderAdmin(){
   const pending = state.store.admin.pending || [];
   const approved = state.store.admin.approved || [];
   appShell(`<div class="card">
-    <div class="actions" style="margin-top:0"><button class="btn soft" data-action="reloadAdmin">↻ Reload requests</button></div>
+    <label>Backend URL / Render link</label>
+    <input id="admin-backend" value="${esc(state.store.backendUrl || '')}" placeholder="https://your-app.onrender.com">
+    <div class="actions" style="margin-top:8px"><button class="btn soft" data-action="reloadAdmin">↻ Reload requests</button></div>
     <h2>Pending Approval</h2>
     ${pending.length ? pending.map((t,i)=>`<div class="card"><b>${esc(t.plan)}</b><p>${esc(t.buyer || t.user)} · ${esc(t.amount)} · ${esc(t.date)}</p><div class="actions"><button class="btn primary" data-action="approve" data-index="${i}">Approve</button><button class="btn danger" data-action="reject" data-index="${i}">Reject</button></div></div>`).join('') : `<p>No pending requests.</p>`}
     <hr>
@@ -328,29 +389,144 @@ async function askBackend(description,input){
   if(!res.ok) throw new Error(data.error || 'Backend request failed.');
   return clean(data.answer || '');
 }
+
+function tokenizeQuestion(q){
+  const stop = new Set(['best','suggest','recommend','which','what','for','me','the','a','an','is','are','will','be','to','of','and','or','in','on','with','available','list','page','this','their','there','i','want','need']);
+  return String(q || '').toLowerCase()
+    .replace(/[^a-z0-9\s]+/g,' ')
+    .split(/\s+/)
+    .filter(w => w.length > 2 && !stop.has(w));
+}
+function scoreItem(text, terms){
+  const lower = String(text || '').toLowerCase();
+  let score = 0;
+  for(const t of terms){
+    if(lower.includes(t)) score += 5;
+    const singular = t.replace(/s$/,'');
+    if(singular && singular !== t && lower.includes(singular)) score += 3;
+  }
+  const intentBoosts = [
+    ['dandruff', ['dandruff','anti dandruff','scalp','head shoulders','clear','selsun','ketoconazole','shampoo']],
+    ['vanilla', ['vanilla','cake','cream','pastry','bakery']],
+    ['cake', ['cake','vanilla','chocolate','cream','pastry','bakery']],
+    ['shampoo', ['shampoo','hair','scalp','dandruff']]
+  ];
+  for(const [intent, words] of intentBoosts){
+    if(terms.includes(intent)){
+      for(const w of words){ if(lower.includes(w)) score += 2; }
+    }
+  }
+  // Slightly prefer concise product-looking texts.
+  if(lower.length < 180) score += 1;
+  if(/\b৳|\$|tk|bdt|price|ml|gm|g\b/.test(lower)) score += 1;
+  return score;
+}
+function localAnalyzePage(question, page){
+  const terms = tokenizeQuestion(question);
+  const items = Array.isArray(page.items) ? page.items.map(x => typeof x === 'string' ? x : x.text).filter(Boolean) : [];
+  const fallbackLines = String(page.text || '').split(/\n|\|/).map(x=>x.trim()).filter(x=>x.length > 4 && x.length < 260);
+  const pool = [...items, ...fallbackLines];
+  const seen = new Set();
+  const ranked = pool
+    .filter(x => {
+      const k = x.toLowerCase();
+      if(seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    })
+    .map(text => ({text, score: scoreItem(text, terms)}))
+    .filter(x => x.score > 0)
+    .sort((a,b)=>b.score-a.score)
+    .slice(0,5);
+
+  const qLower = String(question || '').toLowerCase();
+  if(/summary|summarize|summarise|short note|main point/.test(qLower)){
+    const cleanText = String(page.text || '').replace(/\s+/g,' ').slice(0,1200);
+    return `Summary: ${cleanText || 'I could not read enough text from this page.'}`;
+  }
+
+  if(ranked.length){
+    const best = ranked[0].text;
+    const list = ranked.map((x,i)=>`${i+1}. ${x.text}`).join('\n');
+    return `Best page-based match: ${best}
+
+Why: It matches your question keywords from the current page content.
+
+Other matching options found:
+${list}`;
+  }
+
+  const sample = String(page.text || '').replace(/\s+/g,' ').slice(0,1000);
+  return `I read the page, but I could not find a clear matching option for "${question}".
+
+Page text sample:
+${sample || 'No readable text found.'}`;
+}
+
 async function analyze(){
   const q = $('an-question').value.trim();
   if(!q){ toast('Write a question first'); return; }
+
   const u = currentUser();
   if(state.role !== 'pro'){
-    if(u.credits.used >= u.credits.max){ toast('Free runs finished'); return; }
+    if(u.credits.used >= u.credits.max){
+      toast('Free runs finished');
+      return;
+    }
     u.credits.used++;
+    state.store.users[key(state.role,state.email)] = u;
+    await save();
+    const badge = document.querySelector('.badge');
+    if(badge) badge.textContent = `${u.credits.max-u.credits.used}/${u.credits.max} runs`;
   }
+
   const result = $('an-result');
   result.innerHTML = `<div class="result">Reading current page...</div>`;
+
+  let page;
   try{
-    const page = await sendToPage({type:'APIGARDEN_GET_PAGE_CONTEXT'});
-    const answer = await askBackend(
-      'Analyze the current webpage and answer the user question using only page content. Give the best answer first and short reasons. Do not use markdown bold stars.',
-      `Question: ${q}\n\nCurrent webpage content:\n${(page.text || '').slice(0,9000)}`
-    );
-    result.innerHTML = `<div class="result">${esc(answer).replace(/\n/g,'<br>')}</div>`;
-    await save();
-    render();
-    state.tab='analyzer';
+    page = await sendToPage({type:'APIGARDEN_GET_PAGE_CONTEXT'});
   }catch(e){
-    result.innerHTML = `<div class="result">${esc(e.message)}</div>`;
+    result.innerHTML = `<div class="result">${esc(e.message || 'Could not read this page. Try refreshing the page once and open the extension again.')}</div>`;
+    return;
   }
+
+  const localAnswer = localAnalyzePage(q, page || {});
+  const backendInput = `User question: ${q}
+
+Current page URL: ${page.url || ''}
+Current page title: ${page.title || ''}
+
+Detected products/options/items:
+${(page.items || []).map((x,i)=>`${i+1}. ${typeof x === 'string' ? x : x.text}`).slice(0,120).join('\n')}
+
+Readable webpage content:
+${(page.text || '').slice(0,12000)}
+
+Rules:
+- Answer according to this webpage only.
+- If the user asks for a product recommendation, compare the available page items and choose the best match.
+- For anti-dandruff shampoo, prefer products mentioning dandruff/scalp/shampoo or known anti-dandruff context if visible on the page.
+- For vanilla cake, prefer items mentioning vanilla/cake/cream/bakery if visible on the page.
+- For article questions, summarize or extract the requested name/detail from page text.
+- If the exact answer is not visible, say what matching options you found instead.
+- Keep it concise.
+- Do not use markdown bold stars.`;
+
+  try{
+    result.innerHTML = `<div class="result">Analyzing with AI...</div>`;
+    const answer = await askBackend(
+      'You are APIGarden Page Analyzer. You must answer using the supplied current webpage content and detected page items. Recommend the best matching product/option when asked.',
+      backendInput
+    );
+    const finalAnswer = clean(answer) || localAnswer;
+    result.innerHTML = `<div class="result">${esc(finalAnswer).replace(/\n/g,'<br>')}</div>`;
+  }catch(e){
+    // Important: even if Render URL/API fails, still show a page-based answer.
+    result.innerHTML = `<div class="result">${esc(clean(localAnswer)).replace(/\n/g,'<br>')}<hr><span class="small">AI backend was not reachable, so this is a local page-based suggestion. Paste/check your Render backend URL for smarter answers.</span></div>`;
+  }
+
+  await save();
 }
 async function reloadMessages(){
   state.store = await storageGet();
@@ -358,8 +534,10 @@ async function reloadMessages(){
   render();
 }
 async function requestUpgrade(){
+  const upgradeBackend = $('upgrade-backend')?.value.trim();
+  if(upgradeBackend) state.store.backendUrl = upgradeBackend;
   const u = currentUser();
-  state.store.admin.pending.unshift({
+  const txn = {
     id:'TXN-'+Math.floor(1000+Math.random()*9000),
     user:u.email,
     buyer:u.email,
@@ -367,9 +545,11 @@ async function requestUpgrade(){
     amount:'৳1200',
     method:'bKash Send Money',
     date:new Date().toISOString().slice(0,10)
-  });
+  };
+  state.store.admin.pending.unshift(txn);
   await save();
-  toast('Request sent to admin');
+  const synced = await pushPendingToBackend(txn);
+  toast(synced ? 'Request sent to admin website and extension' : 'Request saved in extension. Add Backend URL to sync with website admin.');
 }
 async function approve(index){
   const t = state.store.admin.pending[index];
@@ -389,6 +569,7 @@ async function approve(index){
   state.store.users[freeK] = free;
   state.store.users[proK] = pro;
   await save();
+  await syncAdminToBackend();
   toast('Approved and message sent');
   render();
 }
@@ -402,6 +583,7 @@ async function reject(index){
   free.messages.unshift({from:'Admin', body:`Your ${t.plan} request was rejected. Please check your transaction details and try again.`});
   state.store.users[freeK] = free;
   await save();
+  await syncAdminToBackend();
   toast('Rejected and message sent');
   render();
 }
@@ -436,14 +618,14 @@ document.addEventListener('click', async (e)=>{
   if(action === 'landing'){ state.screen='landing'; state.role=null; render(); }
   if(action === 'login'){ login(btn.dataset.role); }
   if(action === 'logout'){ logout(); }
-  if(action === 'tab'){ state.tab = btn.dataset.tab; render(); }
+  if(action === 'tab'){ state.tab = btn.dataset.tab; await saveSession(); render(); }
   if(action === 'saveInfo'){ saveInfo(); await save(); }
   if(action === 'fillForm'){ fillForm(); }
   if(action === 'reloadUrl'){ loadCurrentUrl(); toast('URL reloaded'); }
   if(action === 'analyze'){ analyze(); }
   if(action === 'reloadMessages'){ reloadMessages(); }
   if(action === 'requestUpgrade'){ requestUpgrade(); }
-  if(action === 'reloadAdmin'){ state.store = await storageGet(); toast('Requests reloaded'); render(); }
+  if(action === 'reloadAdmin'){ const adminBackend = $('admin-backend')?.value.trim(); state.store = await storageGet(); if(adminBackend) state.store.backendUrl = adminBackend; await save(); const synced = await pullAdminFromBackend(); toast(synced ? 'Website requests reloaded' : 'Extension requests reloaded'); render(); }
   if(action === 'approve'){ approve(Number(btn.dataset.index)); }
   if(action === 'reject'){ reject(Number(btn.dataset.index)); }
   if(action === 'addApi'){ addApi(); }

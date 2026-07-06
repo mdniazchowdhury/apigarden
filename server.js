@@ -159,6 +159,49 @@ Rules:
   }
 });
 
+
+// In-memory demo sync store.
+// This lets the Chrome extension and deployed website share pending/approved requests during a demo.
+// Note: Render may clear this if the service restarts, which is fine for a classroom demo.
+const demoState = {
+  pending: [],
+  approved: []
+};
+
+function cleanTxn(txn = {}) {
+  return {
+    id: String(txn.id || ("TXN-" + Math.floor(1000 + Math.random() * 9000))),
+    user: String(txn.user || txn.buyer || ""),
+    buyer: String(txn.buyer || txn.user || ""),
+    seller: txn.seller ? String(txn.seller) : "",
+    plan: String(txn.plan || "Pro Monthly"),
+    amount: String(txn.amount || "৳1200"),
+    method: String(txn.method || "bKash Send Money"),
+    date: String(txn.date || new Date().toISOString().slice(0, 10)),
+    status: txn.status ? String(txn.status) : undefined,
+    password: txn.password ? String(txn.password) : undefined
+  };
+}
+
+app.get("/api/demo-state", (req, res) => {
+  res.json(demoState);
+});
+
+app.post("/api/demo-state/pending", (req, res) => {
+  const txn = cleanTxn(req.body || {});
+  if (!demoState.pending.some(t => t.id === txn.id)) {
+    demoState.pending.unshift(txn);
+  }
+  res.json({ ok: true, txn, state: demoState });
+});
+
+app.post("/api/demo-state/sync-admin", (req, res) => {
+  const { pending, approved } = req.body || {};
+  if (Array.isArray(pending)) demoState.pending = pending.map(cleanTxn);
+  if (Array.isArray(approved)) demoState.approved = approved.map(cleanTxn);
+  res.json({ ok: true, state: demoState });
+});
+
 app.listen(PORT, () => {
   console.log(`APIGarden server running at http://localhost:${PORT}`);
   console.log(`Using OpenRouter model: ${MODEL}`);
