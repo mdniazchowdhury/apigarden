@@ -5,10 +5,11 @@
   "description": "Generate, test, and monetize APIs with a secure AI backend.",
   "action": {
     "default_title": "APIGarden",
-    "default_popup": "index.html"
+    "default_popup": "popup.html"
   },
   "permissions": [
     "activeTab",
+    "scripting",
     "storage",
     "tabs"
   ],

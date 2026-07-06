@@ -474,6 +474,7 @@ function seededApisHTML(role){
 function setLoading(targetId){ document.getElementById(targetId).innerHTML = `<div class="loading-box"><span class="spinner"></span>Working...</div>`; }
 function setError(targetId, err){ document.getElementById(targetId).innerHTML = `<div class="error-box">⚠ ${escapeHtml(err.message || String(err))}</div>`; }
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function stripStars(value){ return String(value || '').replace(/\*\*/g,'').replace(/__([^_]+)__/g,'$1').replace(/\*([^*\n]+)\*/g,'$1'); }
 function cleanAIText(value){ return String(value || '').replace(/\*\*/g,'').replace(/__([^_]+)__/g,'$1').replace(/\*([^*\n]+)\*/g,'$1'); }
 
 function nl2p(line){ return `<p>${escapeHtml(line)}</p>`; }
@@ -963,6 +964,8 @@ function renderMyApis(role){
           <button class="btn btn-primary small-btn" onclick="runMyApi('${role}', ${i})">Run</button>
           <button class="btn btn-soft small-btn" onclick="runMyApiWithPage('${role}', ${i})">Analyze current page</button>
           ${role==='pro' ? `<button class="btn btn-soft small-btn" onclick="listOnMarket('${role}', ${i})">Sell in marketplace</button>` : `<span class="upgrade-note">Upgrade to Pro to sell this API.</span>`}
+          <button class="btn btn-ghost small-btn" onclick="deleteMyApi('${role}', ${i})">Delete API</button>
+          <button class="btn btn-ghost small-btn" onclick="deleteMyApi('${role}', ${i})">Delete API</button>
           <div id="myapi-result-${role}-${i}"></div>
         </div>
       </div>
@@ -970,6 +973,23 @@ function renderMyApis(role){
   `;
   renderPdfChat(role);
 }
+
+function deleteMyApi(role, i){
+  const api = state[role].apis[i];
+  if(!api) return;
+  const ok = confirm(`Delete "${api.name}" from My APIs? Your used run count will not be restored.`);
+  if(!ok) return;
+  state[role].apis.splice(i,1);
+  if(role === 'pro'){
+    state.admin.market = state.admin.market.filter(m => !(m.seller === state[role].email && m.api === api.name));
+  }
+  userStore[`${role}:${state[role].email.toLowerCase()}`] = state[role];
+  saveAppData?.();
+  renderMyApis(role);
+  renderMarket('free'); renderMarket('pro'); renderAdminMarket?.();
+  showToast(`Deleted "${api.name}"`);
+}
+
 async function runMyApi(role, i){
   const api = state[role].apis[i];
   const input = document.getElementById(`myapi-input-${role}-${i}`).value.trim();
@@ -1214,7 +1234,7 @@ function runInlineAction(code, clickedEl){
   const match = code.match(/^([A-Za-z_$][\w$]*)\((.*)\)$/);
   if(!match) return false;
   const fnName = match[1];
-  const allowed = {go,loginFree,loginPro,loginAdmin,switchTab,openDrawer,closeDrawer,logout,drawerPanel,reloadUserMessages,adminRefresh,startUpgrade,sendUpgradeRequest,saveInfo,fillCurrentPageForm,runAnalyzer,runCurrency,runWeather,runQuote,runGrammar,runPdfQuestion,resetWizard,nextStep,testWizard,saveWizard,runMyApi,runMyApiWithPage,listOnMarket,buyApi,approveTxn,rejectTxn};
+  const allowed = {go,loginFree,loginPro,loginAdmin,switchTab,openDrawer,closeDrawer,logout,drawerPanel,reloadUserMessages,adminRefresh,startUpgrade,sendUpgradeRequest,saveInfo,fillCurrentPageForm,runAnalyzer,runCurrency,runWeather,runQuote,runGrammar,runPdfQuestion,resetWizard,nextStep,testWizard,saveWizard,runMyApi,runMyApiWithPage,deleteMyApi,listOnMarket,buyApi,approveTxn,rejectTxn};
   if(!allowed[fnName]) return false;
   allowed[fnName](...parseInlineArgs(match[2], clickedEl));
   return true;
