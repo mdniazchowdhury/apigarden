@@ -1356,8 +1356,13 @@ function renderAdminMarket(){
     .filter(t => /^API Purchase — /.test(t.plan || '') || t.requestType === 'Marketplace API Purchase');
 
   wrap.innerHTML = `
-  <h2 class="section-title" style="margin-bottom:2px;">Marketplace Buying Request Approvals</h2>
-  <p class="section-sub">Approve or reject marketplace ownership transfer requests.</p>
+  <div class="flex-between" style="margin-bottom:12px;">
+    <div>
+      <h2 class="section-title" style="margin:0 0 2px;">Marketplace Buying Request Approvals</h2>
+      <p class="section-sub" style="margin:0;">Approve or reject marketplace ownership transfer requests.</p>
+    </div>
+    <button class="btn btn-soft small-btn" onclick="adminRefresh()">↻ Reload marketplace requests</button>
+  </div>
   <div class="card" style="padding:6px 0;overflow-x:auto;margin-bottom:18px;"><table>
     <tr><th>Txn ID</th><th>Requester</th><th>Buyer mail</th><th>Seller</th><th>API</th><th>Amount</th><th>Method</th><th>Date</th><th>Status</th><th>Action</th></tr>
     ${purchaseRequests.length ? purchaseRequests.map(t=>`<tr>
