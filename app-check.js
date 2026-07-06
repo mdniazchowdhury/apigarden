@@ -56,6 +56,42 @@ let state = {
 
 function freshWizard(){ return { step:1, name:'', description:'', exampleInput:'', testOutput:null }; }
 
+function todayISO(){ return new Date().toISOString().slice(0,10); }
+function currentEmail(role){ return String(state[role]?.email || '').toLowerCase(); }
+function canDeleteApi(role, api){
+  const owner = String(api.owner || state[role]?.email || '').toLowerCase();
+  return !api.owner || owner === currentEmail(role);
+}
+function ensureSellerTransactions(email){
+  const sellerKey = 'pro:' + String(email || '').toLowerCase();
+  const sellerProfile = userStore[sellerKey] || freshProfile('pro', email || '');
+  sellerProfile.transactions = sellerProfile.transactions || [];
+  userStore[sellerKey] = sellerProfile;
+  return sellerProfile.transactions;
+}
+function upsertSellerTransaction(email, tx){
+  const list = ensureSellerTransactions(email);
+  const idx = list.findIndex(t => (tx.txnId && t.txnId === tx.txnId) || (tx.listingId && t.listingId === tx.listingId && t.status === tx.status));
+  if(idx >= 0) list[idx] = {...list[idx], ...tx};
+  else list.unshift(tx);
+}
+function sellerTransactionsHTML(role){
+  const rows = state[role].transactions || [];
+  if(!rows.length) return `<div class="card" style="padding:14px;"><p class="hint" style="margin:0;">No marketplace transaction yet.</p></div>`;
+  return `<div class="card" style="padding:14px;overflow-x:auto;"><table>
+    <tr><th>API</th><th>Buyer</th><th>Price</th><th>Method</th><th>Date</th><th>Status</th></tr>
+    ${rows.map(t=>`<tr>
+      <td>${escapeHtml(t.api || '—')}</td>
+      <td>${escapeHtml(t.buyer || '—')}</td>
+      <td>${t.price ? '$'+t.price : '—'}</td>
+      <td>${escapeHtml(t.method || '—')}</td>
+      <td>${escapeHtml(t.date || '—')}</td>
+      <td><span class="status-chip ${/sold|approved/i.test(t.status || '') ? 'status-approved' : ''}">${escapeHtml(t.status || 'On shelf')}</span></td>
+    </tr>`).join('')}
+  </table></div>`;
+}
+
+
 const STORAGE_KEY = 'apigarden_demo_state_v3';
 
 function saveAppData(){
@@ -242,7 +278,7 @@ function renderDrawer(role){
       <p class="muted" style="font-size:13px;margin:0;">${state.pro.email}</p>
       <h4>Account</h4>
       <div class="drawer-item" onclick="drawerPanel('pro-form')">📝 Saved info (autofill)</div>
-      <div class="drawer-item" onclick="drawerPanel('pro-transactions')">📈 Transactions</div>
+      <div class="drawer-item" onclick="drawerPanel('pro-transactions')">📈 Marketplace Transactions</div>
       <div class="drawer-item" onclick="drawerPanel('pro-analyzer')">🔎 Analyzer</div>
       <h4>Support</h4>
       <div class="drawer-item" onclick="drawerPanel('pro-inbox')">✉️ Admin Messages ${state.pro.messages.length?`<span class="badge">${state.pro.messages.length} new</span>`:''}</div>
@@ -290,10 +326,7 @@ function drawerPanel(name){
   } else if(name==='pro-form'){
     sub.innerHTML = formInfoHTML('pro');
   } else if(name==='pro-transactions'){
-    sub.innerHTML = `<div class="card" style="padding:14px;overflow-x:auto;">` + (state.pro.transactions.length ? `<table>
-      <tr><th>API</th><th>Buyer</th><th>Price</th></tr>
-      ${state.pro.transactions.map(t=>`<tr><td>${t.api}</td><td>${t.buyer}</td><td>$${t.price}</td></tr>`).join('')}
-    </table>` : `<p class="hint" style="margin:0;">No sales yet.</p>`) + `</div>`;
+    sub.innerHTML = sellerTransactionsHTML('pro');
   } else if(name==='pro-inbox'){
     reloadUserMessages('pro', false);
     sub.innerHTML = `<button class="btn btn-soft small-btn" style="margin-bottom:10px;" onclick="reloadUserMessages('pro')">↻ Reload messages</button>` + messagesHTML(state.pro.messages);
@@ -982,7 +1015,7 @@ async function wizardRunTest(role){
 function wizardBack(role){ state.wizard[role].step = 1; renderWizard(role); }
 function wizardSave(role){
   const w = state.wizard[role];
-  state[role].apis.unshift({name:w.name, description:w.description, endpoint:'/api/v1/run/'+slug(w.name), runs:0});
+  state[role].apis.unshift({name:w.name, description:w.description, endpoint:'/api/v1/run/'+slug(w.name), runs:0, owner: state[role].email, ownershipStatus:'Owned'});
   userStore[`${role}:${state[role].email.toLowerCase()}`] = state[role];
   saveAppData();
   w.step = 3;
@@ -999,7 +1032,7 @@ function renderMyApis(role){
   const apis = state[role].apis;
   wrap.innerHTML = `
     <h2 class="section-title" style="margin-bottom:2px;">My APIs</h2>
-    <p class="section-sub">Manage your ready-made tools and every custom API you create inside APIGarden.</p>
+    <p class="section-sub">Manage your ready-made tools and every custom API you own inside APIGarden.</p>
     ${seededApisHTML(role)}
     ${!state[role].seeded && apis.length===0 ? `<div class="card" style="padding:20px;text-align:center;color:rgba(18,36,28,.55);">No custom APIs yet. Use <b>Create API</b> to make your first one.</div>` : ''}
     ${apis.map((a,i)=>`
@@ -1007,13 +1040,13 @@ function renderMyApis(role){
         <div class="head"><span class="emoji">🔌</span><h3>${escapeHtml(a.name)}</h3></div>
         <p class="desc mono">${a.endpoint} · ${a.runs} run${a.runs!==1?'s':''}</p>
         <p class="desc">${escapeHtml(a.description)}</p>
+        <p class="desc"><span class="badge">${canDeleteApi(role,a) ? 'Owner: You' : 'Owner: '+escapeHtml(a.owner || 'Another user')}</span> ${a.ownershipStatus ? `<span class="badge">${escapeHtml(a.ownershipStatus)}</span>` : ''}</p>
         <div class="body">
           <div class="field"><label>Input</label><input type="text" id="myapi-input-${role}-${i}" placeholder="Type an input to run this API with"></div>
           <button class="btn btn-primary small-btn" onclick="runMyApi('${role}', ${i})">Run</button>
           <button class="btn btn-soft small-btn" onclick="runMyApiWithPage('${role}', ${i})">Analyze current page</button>
-          ${role==='pro' ? `<button class="btn btn-soft small-btn" onclick="listOnMarket('${role}', ${i})">Sell in marketplace</button>` : `<span class="upgrade-note">Upgrade to Pro to sell this API.</span>`}
-          <button class="btn btn-ghost small-btn" onclick="deleteMyApi('${role}', ${i})">Delete API</button>
-          <button class="btn btn-ghost small-btn" onclick="deleteMyApi('${role}', ${i})">Delete API</button>
+          ${role==='pro' && canDeleteApi(role,a) ? `<button class="btn btn-soft small-btn" onclick="listOnMarket('${role}', ${i})">Sell in marketplace</button>` : role==='pro' ? `<span class="upgrade-note">Only the current owner can sell this API.</span>` : `<span class="upgrade-note">Upgrade to Pro to sell this API.</span>`}
+          ${canDeleteApi(role,a) ? `<button class="btn btn-ghost small-btn" onclick="deleteMyApi('${role}', ${i})">Delete API</button>` : `<span class="upgrade-note">Delete locked: ownership transferred.</span>`}
           <div id="myapi-result-${role}-${i}"></div>
         </div>
       </div>
@@ -1025,16 +1058,20 @@ function renderMyApis(role){
 function deleteMyApi(role, i){
   const api = state[role].apis[i];
   if(!api) return;
+  if(!canDeleteApi(role, api)){
+    showToast('Only the current owner can delete this API.');
+    return;
+  }
   const ok = confirm(`Delete "${api.name}" from My APIs? Your used run count will not be restored.`);
   if(!ok) return;
   state[role].apis.splice(i,1);
   if(role === 'pro'){
-    state.admin.market = state.admin.market.filter(m => !(m.seller === state[role].email && m.api === api.name));
+    state.admin.market = state.admin.market.filter(m => !(m.seller === state[role].email && m.api === api.name && m.status !== 'Sold'));
   }
   userStore[`${role}:${state[role].email.toLowerCase()}`] = state[role];
-  saveAppData?.();
+  saveAppData();
   renderMyApis(role);
-  renderMarket('free'); renderMarket('pro'); renderAdminMarket?.();
+  renderMarket('free'); renderMarket('pro'); renderAdminMarket();
   showToast(`Deleted "${api.name}"`);
 }
 
@@ -1081,7 +1118,8 @@ Give a clear recommendation with the best option first, short reasons, and anyth
 function listOnMarket(role, i){
   if(role !== 'pro'){ showToast('Only Pro users can sell created APIs in the marketplace.'); return; }
   const api = state[role].apis[i];
-  if(state.admin.market.some(item => item.api === api.name && item.seller === state[role].email)){
+  if(!canDeleteApi(role, api)){ showToast('Only the current owner can sell this API.'); return; }
+  if(state.admin.market.some(item => item.api === api.name && item.seller === state[role].email && item.status !== 'Sold')){
     showToast('This API is already listed in the marketplace.');
     return;
   }
@@ -1089,9 +1127,13 @@ function listOnMarket(role, i){
   if(price===null) return;
   const p = parseFloat(price);
   if(isNaN(p) || p<=0){ showToast('Enter a valid price'); return; }
-  state.admin.market.push({id:'mkt-'+slug(api.name)+'-'+Math.floor(Math.random()*999), seller: state[role].email, api: api.name, description: api.description, price:p, sold:0});
+  const listing = {id:'mkt-'+slug(api.name)+'-'+Math.floor(Math.random()*999), seller: state[role].email, owner:state[role].email, api: api.name, description: api.description, price:p, sold:0, status:'On shelf', date:todayISO()};
+  state.admin.market.push(listing);
+  api.ownershipStatus = 'On shelf';
+  upsertSellerTransaction(state[role].email, {api:api.name, buyer:'—', price:p, method:'—', date:todayISO(), status:'On shelf', listingId:listing.id});
+  state[role].transactions = userStore['pro:'+state[role].email.toLowerCase()].transactions;
   saveAppData();
-  renderMarket('free'); renderMarket('pro'); renderAdminMarket();
+  renderMyApis(role); renderMarket('free'); renderMarket('pro'); renderAdminMarket();
   showToast(`Listed "${api.name}" for $${p} on the marketplace`);
 }
 
@@ -1099,19 +1141,22 @@ function listOnMarket(role, i){
 function renderMarket(role){
   const wrap = document.getElementById('market-area-'+role);
   if(!wrap) return;
+  const live = state.admin.market.filter(m => m.status !== 'Sold');
   wrap.innerHTML = `
-    <div class="market-hero"><div><h2 class="section-title">Marketplace</h2><p class="section-sub">Discover polished APIs, send purchase requests, and expand your toolkit with just a few clicks.</p></div><span class="market-badge">${state.admin.market.length} live listing${state.admin.market.length!==1?'s':''}</span></div>
+    <div class="market-hero"><div><h2 class="section-title">Marketplace</h2><p class="section-sub">Discover polished APIs, send purchase requests, and expand your toolkit with just a few clicks.</p></div><span class="market-badge">${live.length} live listing${live.length!==1?'s':''}</span></div>
     ${role==='free' ? `<div class="card" style="padding:14px 16px;margin-bottom:14px;"><b>Free user notice:</b> You can buy listed APIs, but only Pro users can sell their own created APIs.</div>` : `<div class="card" style="padding:14px 16px;margin-bottom:14px;"><b>Pro seller mode:</b> Create an API in "My APIs" and list it here using the sell button.</div>`}
-    ${state.admin.market.length===0 ? `<div class="card" style="padding:20px;text-align:center;color:rgba(18,36,28,.5);">No listings yet.</div>` : state.admin.market.map(m=>`
+    ${live.length===0 ? `<div class="card" style="padding:20px;text-align:center;color:rgba(18,36,28,.5);">No listings yet.</div>` : live.map(m=>`
       <div class="card api-row">
         <div style="flex:1;min-width:160px;">
           <div class="name">${escapeHtml(m.api)}</div>
-          <div class="meta">sold by ${escapeHtml(m.seller)} · ${m.sold} sales</div>
+          <div class="meta">sold by ${escapeHtml(m.seller)} · ${m.sold || 0} sales · ${escapeHtml(m.status || 'On shelf')}</div>
           <div class="market-meta">${escapeHtml(m.description || '')}</div>
           <div class="market-seller-chip">Seller email: ${escapeHtml(m.seller)}</div>
         </div>
         <div class="mono" style="font-weight:700;">$${m.price}</div>
-        <button class="btn btn-clay small-btn" onclick="buyApi('${role}', '${m.id}')">Send buy request</button>
+        ${m.status === 'Pending approval'
+          ? `<button class="btn btn-soft small-btn" disabled>Pending approval</button>`
+          : `<button class="btn btn-clay small-btn" onclick="buyApi('${role}', '${m.id}')">Send buy request</button>`}
       </div>
     `).join('')}
   `;
@@ -1120,16 +1165,30 @@ function buyApi(role, listingId){
   const item = state.admin.market.find(m => m.id === listingId);
   if(!item) return;
   const buyerEmail = state[role].email;
+  if(String(item.seller).toLowerCase() === buyerEmail.toLowerCase()){
+    showToast('You already own this API.');
+    return;
+  }
+  if(item.status === 'Sold'){
+    showToast('This API has already been sold.');
+    return;
+  }
   const ok = confirm(`Send $${item.price} equivalent via bKash "Send Money", then tap OK to notify admin for approval.`);
   if(ok){
-    state.admin.pending.push({id:'TXN-'+Math.floor(3000+Math.random()*900), user: buyerEmail, buyer: buyerEmail, seller: item.seller, apiName: item.api, listingId: item.id, plan:'API Purchase — '+item.api, amount:'$'+item.price, method:'bKash Send Money', date:new Date().toISOString().slice(0,10)});
+    const txn = {id:'TXN-'+Math.floor(3000+Math.random()*900), user: buyerEmail, buyer: buyerEmail, buyerRole:role, seller: item.seller, apiName: item.api, listingId: item.id, plan:'API Purchase — '+item.api, amount:'$'+item.price, method:'bKash Send Money', date:todayISO(), requestType:'Marketplace API Purchase'};
+    state.admin.pending.push(txn);
+    item.status = 'Pending approval';
+    item.pendingBuyer = buyerEmail;
+    item.pendingTxnId = txn.id;
+    upsertSellerTransaction(item.seller, {api:item.api, buyer:buyerEmail, price:item.price, method:'bKash Send Money', date:todayISO(), status:'Pending admin approval', listingId:item.id, txnId:txn.id});
     const sellerProfile = userStore['pro:'+item.seller.toLowerCase()];
     if(sellerProfile){
       sellerProfile.messages = sellerProfile.messages || [];
       sellerProfile.messages.unshift({from:'Marketplace', body:`${buyerEmail} has requested to buy your API "${item.api}". The request is now waiting for admin approval.`});
     }
     saveAppData();
-    renderPending();
+    pushPendingToBackend(txn);
+    renderPending(); renderAdminMarket(); renderMarket('free'); renderMarket('pro');
     showToast('Buy request submitted — pending admin approval');
   }
 }
@@ -1161,23 +1220,44 @@ function ensureProProfileFromFree(email, password){
   proProfile.upgradedFrom = email;
   userStore[proKey] = proProfile;
 }
-function deliverPurchasedApi(buyerEmail, apiName){
-  const item = state.admin.market.find(m=>m.api === apiName);
+function deliverPurchasedApi(buyerEmail, apiName, txn={}){
+  const item = state.admin.market.find(m=>m.id === txn.listingId) || state.admin.market.find(m=>m.api === apiName);
   if(!item) return;
-  const buyerKey = 'free:'+buyerEmail.toLowerCase();
-  const buyer = userStore[buyerKey] || freshProfile('free', buyerEmail);
+  const buyerRole = txn.buyerRole || 'free';
+  const buyerKey = buyerRole + ':' + buyerEmail.toLowerCase();
+  const buyer = userStore[buyerKey] || freshProfile(buyerRole, buyerEmail);
+  const newApi = {name:item.api, description:item.description, endpoint:'/api/v1/run/'+slug(item.api), runs:0, owner:buyerEmail, ownershipStatus:'Owned', purchasedFrom:item.seller, purchaseDate:todayISO()};
   if(!buyer.apis.some(a=>a.name === item.api)){
-    buyer.apis.unshift({name:item.api, description:item.description, endpoint:'/api/v1/run/'+slug(item.api), runs:0});
+    buyer.apis.unshift(newApi);
+  }else{
+    buyer.apis = buyer.apis.map(a => a.name === item.api ? {...a, owner:buyerEmail, ownershipStatus:'Owned', purchasedFrom:item.seller, purchaseDate:todayISO()} : a);
   }
   buyer.payments = buyer.payments || [];
-  buyer.payments.unshift({plan:'Marketplace API — '+item.api, validity:'Lifetime access', info:'Approved by admin'});
+  buyer.payments.unshift({plan:'Marketplace API — '+item.api, validity:'Ownership transferred', info:'Approved by admin'});
+  userStore[buyerKey] = buyer;
+
   item.sold = (item.sold || 0) + 1;
-  const sellerProfile = userStore['pro:' + item.seller.toLowerCase()];
+  item.status = 'Sold';
+  item.owner = buyerEmail;
+  item.soldTo = buyerEmail;
+  item.soldDate = todayISO();
+
+  const sellerProfile = userStore['pro:' + String(item.seller).toLowerCase()];
   if(sellerProfile){
     sellerProfile.transactions = sellerProfile.transactions || [];
     sellerProfile.messages = sellerProfile.messages || [];
-    sellerProfile.transactions.unshift({api:item.api, buyer:buyerEmail, price:item.price});
-    sellerProfile.messages.unshift({from:'Admin', body:`Your API "${item.api}" has been approved for sale to ${buyerEmail}.`});
+    const txIndex = sellerProfile.transactions.findIndex(t => t.txnId === txn.id || t.listingId === item.id);
+    const soldTx = {api:item.api, buyer:buyerEmail, price:item.price, method:txn.method || 'bKash Send Money', date:todayISO(), status:'Sold / Ownership transferred', listingId:item.id, txnId:txn.id};
+    if(txIndex >= 0) sellerProfile.transactions[txIndex] = {...sellerProfile.transactions[txIndex], ...soldTx};
+    else sellerProfile.transactions.unshift(soldTx);
+    sellerProfile.messages.unshift({from:'Admin', body:`Your API "${item.api}" has been sold to ${buyerEmail}. Ownership has been transferred.`});
+    if(String(item.seller).toLowerCase() !== 'apigarden studio'){
+      sellerProfile.apis = (sellerProfile.apis || []).filter(a => a.name !== item.api);
+    }
+    userStore['pro:' + String(item.seller).toLowerCase()] = sellerProfile;
+  }
+  if(String(item.seller).toLowerCase() !== 'apigarden studio'){
+    state.admin.market = state.admin.market.filter(m => m.id !== item.id);
   }
 }
 
@@ -1190,6 +1270,22 @@ function rejectTxn(i){
   const msg = {from:'Admin', body:`Your request "${t.plan}" (${t.amount}) was rejected. Please check the transaction information and send again if needed.`};
   notifyUser(buyerEmail, 'free', msg);
   pushUserMessageToBackend('free', buyerEmail, msg);
+  if(t.listingId){
+    const item = state.admin.market.find(m => m.id === t.listingId);
+    if(item){
+      item.status = 'On shelf';
+      delete item.pendingBuyer;
+      delete item.pendingTxnId;
+    }
+    const sellerProfile = userStore['pro:'+String(t.seller || '').toLowerCase()];
+    if(sellerProfile){
+      sellerProfile.transactions = sellerProfile.transactions || [];
+      const idx = sellerProfile.transactions.findIndex(x => x.txnId === t.id || x.listingId === t.listingId);
+      const rejectedTx = {api:t.apiName, buyer:buyerEmail, price:String(t.amount || '').replace('$',''), method:t.method, date:todayISO(), status:'Rejected by admin', listingId:t.listingId, txnId:t.id};
+      if(idx >= 0) sellerProfile.transactions[idx] = {...sellerProfile.transactions[idx], ...rejectedTx};
+      else sellerProfile.transactions.unshift(rejectedTx);
+    }
+  }
   if(t.seller){
     const sellerMsg = {from:'Admin', body:`The purchase request for your API "${t.apiName || t.plan}" from ${buyerEmail} was rejected by admin.`};
     notifyUser(t.seller, 'pro', sellerMsg);
@@ -1197,7 +1293,7 @@ function rejectTxn(i){
   }
   saveAppData();
   syncAdminToBackend();
-  renderPending(); renderApproved(); renderAdminMarket();
+  renderPending(); renderApproved(); renderAdminMarket(); renderMarket('free'); renderMarket('pro');
   showToast(`Rejected ${t.id}`);
 }
 
@@ -1227,7 +1323,7 @@ function approveTxn(i){
     }
   } else if(/^API Purchase — /.test(t.plan)){
     const apiName = t.plan.replace('API Purchase — ','');
-    deliverPurchasedApi(buyerEmail, apiName);
+    deliverPurchasedApi(buyerEmail, apiName, t);
     profile.messages = profile.messages || [];
     const msg = {from:'Admin', body:`Your purchase request for "${apiName}" from seller ${t.seller || 'Marketplace seller'} has been approved. The API is now available in your account.`};
     profile.messages.unshift(msg);
@@ -1255,10 +1351,44 @@ function renderApproved(){
 }
 function renderAdminMarket(){
   const wrap = document.getElementById('admin-market-area');
-  wrap.innerHTML = `<div class="card" style="padding:6px 0;overflow-x:auto;"><table>
-    <tr><th>Seller</th><th>API</th><th>Price</th><th>Units sold</th><th>Platform fee (10%)</th></tr>
-    ${state.admin.market.length ? state.admin.market.map(m=>`<tr><td>${m.seller}</td><td>${m.api}</td><td>$${m.price}</td><td>${m.sold}</td><td>$${(m.price*0.1).toFixed(2)}</td></tr>`).join('')
-      : `<tr><td colspan="5" style="text-align:center;color:rgba(18,36,28,.5);padding:22px;">No listings yet.</td></tr>`}
+  const purchaseRequests = state.admin.pending
+    .map((t,i)=>({...t, index:i}))
+    .filter(t => /^API Purchase — /.test(t.plan || '') || t.requestType === 'Marketplace API Purchase');
+
+  wrap.innerHTML = `
+  <h2 class="section-title" style="margin-bottom:2px;">Marketplace Buying Request Approvals</h2>
+  <p class="section-sub">Approve or reject marketplace ownership transfer requests.</p>
+  <div class="card" style="padding:6px 0;overflow-x:auto;margin-bottom:18px;"><table>
+    <tr><th>Txn ID</th><th>Requester</th><th>Buyer mail</th><th>Seller</th><th>API</th><th>Amount</th><th>Method</th><th>Date</th><th>Status</th><th>Action</th></tr>
+    ${purchaseRequests.length ? purchaseRequests.map(t=>`<tr>
+      <td class="mono">${t.id}</td>
+      <td>${escapeHtml(t.buyer || t.user)}</td>
+      <td>${escapeHtml(t.buyer || t.user)}</td>
+      <td>${escapeHtml(t.seller || '—')}</td>
+      <td>${escapeHtml(t.apiName || (t.plan || '').replace('API Purchase — ',''))}</td>
+      <td>${escapeHtml(t.amount || '—')}</td>
+      <td>${escapeHtml(t.method || '—')}</td>
+      <td>${escapeHtml(t.date || '—')}</td>
+      <td><span class="status-chip">Pending admin approval</span></td>
+      <td><button class="btn btn-primary small-btn" onclick="approveTxn(${t.index})">Approve</button> <button class="btn btn-ghost small-btn" onclick="rejectTxn(${t.index})">Reject</button></td>
+    </tr>`).join('') : `<tr><td colspan="10" style="text-align:center;color:rgba(18,36,28,.5);padding:22px;">No marketplace buying requests right now.</td></tr>`}
+  </table></div>
+
+  <h2 class="section-title" style="margin-bottom:2px;">Marketplace Listings</h2>
+  <p class="section-sub">Live shelf items, pending items, and platform fees.</p>
+  <div class="card" style="padding:6px 0;overflow-x:auto;"><table>
+    <tr><th>Seller</th><th>Current owner</th><th>API</th><th>Price</th><th>Status</th><th>Pending buyer / Sold to</th><th>Units sold</th><th>Platform fee (10%)</th></tr>
+    ${state.admin.market.length ? state.admin.market.map(m=>`<tr>
+      <td>${escapeHtml(m.seller)}</td>
+      <td>${escapeHtml(m.owner || m.seller)}</td>
+      <td>${escapeHtml(m.api)}</td>
+      <td>$${m.price}</td>
+      <td><span class="status-chip ${m.status==='Sold'?'status-approved':''}">${escapeHtml(m.status || 'On shelf')}</span></td>
+      <td>${escapeHtml(m.pendingBuyer || m.soldTo || '—')}</td>
+      <td>${m.sold || 0}</td>
+      <td>$${(m.price*0.1).toFixed(2)}</td>
+    </tr>`).join('')
+      : `<tr><td colspan="8" style="text-align:center;color:rgba(18,36,28,.5);padding:22px;">No listings yet.</td></tr>`}
   </table></div>`;
 }
 
