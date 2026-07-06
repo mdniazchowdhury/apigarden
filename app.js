@@ -13,7 +13,7 @@ const SEEDED_EMAIL = 'ishita.chowdhury@northsouth.edu';
 function freshProfile(role, email){
   const base = {
     email,
-    savedInfo: {name:'', email, phone:'', address:''},
+    savedInfo: {name:'', email, phone:'', gender:'', country:'', city:'', location:'', dob:'', address:''},
     apis: [], pdfText: '', pdfName: '',
     chatlog: { grammar: [], pdf: [] },
     seeded: email.toLowerCase() === SEEDED_EMAIL
@@ -56,25 +56,70 @@ let state = {
 
 function freshWizard(){ return { step:1, name:'', description:'', exampleInput:'', testOutput:null }; }
 
+const STORAGE_KEY = 'apigarden_demo_state_v3';
+
+function saveAppData(){
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ admin: state.admin, userStore }));
+  }catch(e){}
+}
+function loadAppData(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return false;
+    const data = JSON.parse(raw);
+    if(data.admin) state.admin = data.admin;
+    if(data.userStore) userStore = data.userStore;
+    return true;
+  }catch(e){ return false; }
+}
+function adminRefresh(){
+  loadAppData();
+  renderPending();
+  renderApproved();
+  renderAdminMarket();
+  showToast('Admin requests refreshed');
+}
+function notifyUser(email, role, message){
+  const key = `${role}:${String(email).toLowerCase()}`;
+  const profile = userStore[key] || freshProfile(role, email);
+  profile.messages = profile.messages || [];
+  profile.messages.unshift(message);
+  userStore[key] = profile;
+}
+
+
+loadAppData();
+
 /* ==================== NAV ==================== */
-function go(view){
+function go(view, push=true){
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
-  document.getElementById('view-'+view).classList.add('active');
+  const target = document.getElementById('view-'+view);
+  if(target) target.classList.add('active');
+  if(push){ history.pushState({view}, '', '#'+view); }
   window.scrollTo({top:0, behavior:'smooth'});
 }
+window.addEventListener('popstate', (event)=>{
+  const view = event.state?.view || (location.hash ? location.hash.slice(1) : 'landing');
+  go(view || 'landing', false);
+});
+history.replaceState({view:'landing'}, '', location.hash || '#landing');
 function loginFree(){
+  loadAppData();
   const email = (document.getElementById('free-email').value.trim() || 'you@example.com').toLowerCase();
   state.free = getProfile('free', email);
   go('free-app');
   renderWizard('free'); renderMyApis('free'); renderMarket('free'); updateCreditChip(); checkAIBackend('free');
 }
 function loginPro(){
+  loadAppData();
   const email = (document.getElementById('pro-email').value.trim() || 'pro.user@example.com').toLowerCase();
   state.pro = getProfile('pro', email);
   go('pro-app');
   renderWizard('pro'); renderMyApis('pro'); renderMarket('pro'); checkAIBackend('pro');
 }
 function loginAdmin(){
+  loadAppData();
   const email = document.getElementById('admin-email').value.trim();
   const pass = document.getElementById('admin-pass').value.trim();
   const hint = document.getElementById('admin-hint');
@@ -134,11 +179,13 @@ function renderDrawer(role){
       <p class="muted" style="font-size:13px;margin:0;">${state.free.email}</p>
       <h4>Account</h4>
       <div class="drawer-item" onclick="drawerPanel('free-usage')">📊 Free runs remaining</div>
+      <div class="drawer-item" onclick="drawerPanel('free-analyzer')">🔎 Analyzer</div>
       <h4>Transactions</h4>
       <div class="drawer-item" onclick="drawerPanel('free-payments')">💳 My Payments</div>
       <div class="drawer-item" onclick="drawerPanel('free-plans')">🌿 Our Plans</div>
       <h4>Support</h4>
       <div class="drawer-item" onclick="drawerPanel('free-inbox')">✉️ Admin Messages ${state.free.messages.length?`<span class="badge">${state.free.messages.length} new</span>`:''}</div>
+      <div class="drawer-item" onclick="reloadUserMessages('free')">↻ Reload admin messages</div>
       <div class="drawer-item" onclick="drawerPanel('free-form')">📝 Saved info (autofill)</div>
       <h4>Session</h4>
       <div class="drawer-item" onclick="logout()">🚪 Log out / switch role</div>
@@ -150,8 +197,10 @@ function renderDrawer(role){
       <h4>Account</h4>
       <div class="drawer-item" onclick="drawerPanel('pro-form')">📝 Saved info (autofill)</div>
       <div class="drawer-item" onclick="drawerPanel('pro-transactions')">📈 Transactions</div>
+      <div class="drawer-item" onclick="drawerPanel('pro-analyzer')">🔎 Analyzer</div>
       <h4>Support</h4>
-      <div class="drawer-item" onclick="drawerPanel('pro-inbox')">✉️ Notifications ${state.pro.messages.length?`<span class="badge">${state.pro.messages.length} new</span>`:''}</div>
+      <div class="drawer-item" onclick="drawerPanel('pro-inbox')">✉️ Admin Messages ${state.pro.messages.length?`<span class="badge">${state.pro.messages.length} new</span>`:''}</div>
+      <div class="drawer-item" onclick="reloadUserMessages('pro')">↻ Reload admin messages</div>
       <h4>Session</h4>
       <div class="drawer-item" onclick="logout()">🚪 Log out / switch role</div>
       <div id="drawer-sub" style="margin-top:12px;"></div>`;
@@ -159,6 +208,7 @@ function renderDrawer(role){
     el.innerHTML = `
       <h3 style="margin:6px 0 2px;">Menu</h3>
       <p class="muted" style="font-size:13px;margin:0;">admin@northsouth.edu</p>
+      <div class="drawer-item" onclick="adminRefresh()">↻ Reload requests</div>
       <div class="drawer-item" onclick="logout()">🚪 Log out / switch role</div>
       <div id="drawer-sub" style="margin-top:12px;"></div>`;
   }
@@ -184,9 +234,13 @@ function drawerPanel(name){
   } else if(name==='free-plans'){
     sub.innerHTML = plansHTML();
   } else if(name==='free-inbox'){
-    sub.innerHTML = messagesHTML(state.free.messages);
+    reloadUserMessages('free', false);
+    sub.innerHTML = `<button class="btn btn-soft small-btn" style="margin-bottom:10px;" onclick="reloadUserMessages('free')">↻ Reload messages</button>` + messagesHTML(state.free.messages);
   } else if(name==='free-form'){
     sub.innerHTML = formInfoHTML('free');
+  } else if(name==='free-analyzer'){
+    sub.innerHTML = analyzerHTML('free');
+    loadAnalyzerUrl('free');
   } else if(name==='pro-form'){
     sub.innerHTML = formInfoHTML('pro');
   } else if(name==='pro-transactions'){
@@ -195,9 +249,73 @@ function drawerPanel(name){
       ${state.pro.transactions.map(t=>`<tr><td>${t.api}</td><td>${t.buyer}</td><td>$${t.price}</td></tr>`).join('')}
     </table>` : `<p class="hint" style="margin:0;">No sales yet.</p>`) + `</div>`;
   } else if(name==='pro-inbox'){
-    sub.innerHTML = messagesHTML(state.pro.messages);
+    reloadUserMessages('pro', false);
+    sub.innerHTML = `<button class="btn btn-soft small-btn" style="margin-bottom:10px;" onclick="reloadUserMessages('pro')">↻ Reload messages</button>` + messagesHTML(state.pro.messages);
+  } else if(name==='pro-analyzer'){
+    sub.innerHTML = analyzerHTML('pro');
+    loadAnalyzerUrl('pro');
   }
 }
+
+function reloadUserMessages(role, show=true){
+  loadAppData();
+  const key = `${role}:${state[role].email.toLowerCase()}`;
+  const latest = userStore[key];
+  if(latest){
+    state[role].messages = latest.messages || [];
+    state[role].payments = latest.payments || state[role].payments;
+    state[role].transactions = latest.transactions || state[role].transactions;
+    state[role].apis = latest.apis || state[role].apis;
+  }
+  renderDrawer(role);
+  if(document.getElementById('drawer-sub')){
+    const sub = document.getElementById('drawer-sub');
+    sub.innerHTML = `<button class="btn btn-soft small-btn" style="margin-bottom:10px;" onclick="reloadUserMessages('${role}')">↻ Reload messages</button>` + messagesHTML(state[role].messages || []);
+  }
+  if(show) showToast('Messages reloaded');
+}
+function analyzerHTML(role){
+  return `<div class="card" style="padding:16px;">
+    <h4 class="h-inline">Current Page Analyzer</h4>
+    <p class="hint" style="margin-top:0;">Open APIGarden as a Chrome extension on any webpage, then ask what you want to know about that page.</p>
+    <div class="field"><label>Current page URL</label><input type="text" id="${role}-an-url" readonly placeholder="Open as extension to detect URL"></div>
+    <div class="field"><label>Your question</label><textarea id="${role}-an-q" rows="4" placeholder="Example: Which hotel option is best for me and why?"></textarea></div>
+    <button class="btn btn-primary small-btn" onclick="runAnalyzer('${role}')">Analyze this page</button>
+    <div id="${role}-an-result"></div>
+  </div>`;
+}
+async function loadAnalyzerUrl(role){
+  try{
+    const response = await sendToActiveTab({type:'APIGARDEN_GET_PAGE_CONTEXT'});
+    const urlMatch = String(response?.text || '').match(/URL:\s*(.+)/);
+    const input = document.getElementById(`${role}-an-url`);
+    if(input) input.value = urlMatch ? urlMatch[1].trim() : 'Current page detected';
+  }catch(err){
+    const input = document.getElementById(`${role}-an-url`);
+    if(input) input.value = 'Open APIGarden from the Chrome extension on a webpage';
+  }
+}
+async function runAnalyzer(role){
+  const q = document.getElementById(`${role}-an-q`)?.value.trim();
+  const targetId = `${role}-an-result`;
+  if(!q){ showToast('Write a question first'); return; }
+  if(!tryUseCredit(role)) return;
+  document.getElementById(targetId).innerHTML = `<div class="loading-box"><span class="spinner"></span>Reading current page and analyzing...</div>`;
+  try{
+    const pageText = await getCurrentPageContext();
+    const input = `Question: ${q}
+
+Current webpage:
+${pageText.slice(0, 8500)}
+
+Answer clearly. Start with the best answer or best option, then give short reasons. Do not use markdown bold stars.`;
+    const output = await runGeneratedApi('Analyze the current webpage and answer the user question using the page content.', input);
+    document.getElementById(targetId).innerHTML = `<div class="result-box">${formatAIOutput(output)}</div>`;
+  }catch(err){
+    setError(targetId, err);
+  }
+}
+
 function plansHTML(){
   return `<div class="plan-grid">
     <div class="card plan-card"><span class="badge tag">Current</span><h4 class="h-inline">Free Trial</h4><div class="plan-price">৳0</div><ul><li>5 ready-made APIs</li><li>6 free AI runs</li></ul></div>
@@ -208,7 +326,8 @@ function plansHTML(){
 function startUpgrade(plan, amount){
   const proceed = confirm(`Send ${amount} via bKash "Send Money" to 017XX-XXXXXX, then tap OK to notify admin for approval.`);
   if(proceed){
-    state.admin.pending.push({id:'TXN-'+Math.floor(2000+Math.random()*900), user:state.free.email, plan, amount, method:'bKash Send Money', date:new Date().toISOString().slice(0,10)});
+    state.admin.pending.push({id:'TXN-'+Math.floor(2000+Math.random()*900), user:state.free.email, buyer:state.free.email, plan, amount, method:'bKash Send Money', date:new Date().toISOString().slice(0,10)});
+    saveAppData();
     renderPending();
     showToast('Payment submitted — waiting for admin approval');
     closeDrawer();
@@ -216,19 +335,24 @@ function startUpgrade(plan, amount){
 }
 function messagesHTML(list){
   if(!list.length) return `<div class="card" style="padding:16px;text-align:center;color:rgba(18,36,28,.5);font-size:13.5px;">No messages yet.</div>`;
-  return list.map(m=>`<div class="card msg-item"><div class="from">From ${escapeHtml(m.from || 'Admin')}</div><div class="body">${m.body}</div>${m.password? `<span class="pw">${m.password}</span>`:''}</div>`).join('');
+  return list.map(m=>`<div class="card msg-item"><div class="from">From ${escapeHtml(m.from || 'Admin')}</div><div class="body">${escapeHtml(cleanAIText(m.body || ''))}</div>${m.password? `<span class="pw">${escapeHtml(m.password)}</span>`:''}</div>`).join('');
 }
 function formInfoHTML(role){
   const info = state[role].savedInfo;
   return `<div class="card" style="padding:18px;">
-    <p class="hint" style="margin-top:0;">Saved once, reused everywhere.</p>
+    <p class="hint" style="margin-top:0;">Saved once, reused everywhere. In the Chrome extension, use this to fill matching fields on the current page.</p>
     <div class="grid2">
-      <div class="field"><label>Full name</label><input type="text" id="${role}-si-name" value="${info.name}"></div>
-      <div class="field"><label>Email</label><input type="text" id="${role}-si-email" value="${info.email}"></div>
-      <div class="field"><label>Phone</label><input type="text" id="${role}-si-phone" value="${info.phone}"></div>
-      <div class="field"><label>Address</label><input type="text" id="${role}-si-address" value="${info.address}"></div>
+      <div class="field"><label>Full name</label><input type="text" id="${role}-si-name" value="${escapeHtml(info.name || '')}"></div>
+      <div class="field"><label>Email</label><input type="text" id="${role}-si-email" value="${escapeHtml(info.email || '')}"></div>
+      <div class="field"><label>Phone</label><input type="text" id="${role}-si-phone" value="${escapeHtml(info.phone || '')}"></div>
+      <div class="field"><label>Gender</label><input type="text" id="${role}-si-gender" value="${escapeHtml(info.gender || '')}" placeholder="e.g. Female"></div>
+      <div class="field"><label>Country</label><input type="text" id="${role}-si-country" value="${escapeHtml(info.country || '')}" placeholder="e.g. Bangladesh"></div>
+      <div class="field"><label>City</label><input type="text" id="${role}-si-city" value="${escapeHtml(info.city || '')}" placeholder="e.g. Dhaka"></div>
+      <div class="field"><label>Location / Address</label><input type="text" id="${role}-si-location" value="${escapeHtml(info.location || info.address || '')}" placeholder="e.g. Bashundhara R/A, Dhaka"></div>
+      <div class="field"><label>Date of birth</label><input type="text" id="${role}-si-dob" value="${escapeHtml(info.dob || '')}" placeholder="YYYY-MM-DD"></div>
     </div>
     <button class="btn btn-soft small-btn" onclick="saveInfo('${role}')">Save info</button>
+    <button class="btn btn-primary small-btn" onclick="fillCurrentPageForm('${role}')">Fill current page form</button>
   </div>`;
 }
 function saveInfo(role){
@@ -236,9 +360,46 @@ function saveInfo(role){
     name: document.getElementById(`${role}-si-name`).value,
     email: document.getElementById(`${role}-si-email`).value,
     phone: document.getElementById(`${role}-si-phone`).value,
-    address: document.getElementById(`${role}-si-address`).value,
+    gender: document.getElementById(`${role}-si-gender`).value,
+    country: document.getElementById(`${role}-si-country`).value,
+    city: document.getElementById(`${role}-si-city`).value,
+    location: document.getElementById(`${role}-si-location`).value,
+    dob: document.getElementById(`${role}-si-dob`).value,
+    address: document.getElementById(`${role}-si-location`).value
   };
-  showToast('Saved. Every form will use this from now on.');
+  const key = `${role}:${state[role].email.toLowerCase()}`;
+  userStore[key] = state[role];
+  saveAppData();
+  showToast('Saved. Matching forms can now be filled from the extension.');
+}
+function extensionReady(){
+  return typeof chrome !== 'undefined' && chrome.tabs && chrome.runtime;
+}
+function sendToActiveTab(message){
+  return new Promise((resolve, reject)=>{
+    if(!extensionReady()) return reject(new Error('This works when APIGarden is opened as a Chrome extension popup.'));
+    chrome.tabs.query({active:true, currentWindow:true}, (tabs)=>{
+      const tab = tabs && tabs[0];
+      if(!tab || !tab.id) return reject(new Error('No active tab found.'));
+      chrome.tabs.sendMessage(tab.id, message, (response)=>{
+        if(chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+        resolve(response);
+      });
+    });
+  });
+}
+async function fillCurrentPageForm(role){
+  try{
+    saveInfo(role);
+    const response = await sendToActiveTab({type:'APIGARDEN_FILL_FORM', data: state[role].savedInfo});
+    showToast(`Filled ${response?.filled || 0} matching field${response?.filled===1?'':'s'} on this page`);
+  }catch(err){
+    showToast(err.message || 'Could not fill this page');
+  }
+}
+async function getCurrentPageContext(){
+  const response = await sendToActiveTab({type:'APIGARDEN_GET_PAGE_CONTEXT'});
+  return response?.text || '';
 }
 
 /* ==================== SEEDED APIS (only shown for the one email that "created" them) ==================== */
@@ -313,6 +474,7 @@ function seededApisHTML(role){
 function setLoading(targetId){ document.getElementById(targetId).innerHTML = `<div class="loading-box"><span class="spinner"></span>Working...</div>`; }
 function setError(targetId, err){ document.getElementById(targetId).innerHTML = `<div class="error-box">⚠ ${escapeHtml(err.message || String(err))}</div>`; }
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function cleanAIText(value){ return String(value || '').replace(/\*\*/g,'').replace(/__([^_]+)__/g,'$1').replace(/\*([^*\n]+)\*/g,'$1'); }
 
 function nl2p(line){ return `<p>${escapeHtml(line)}</p>`; }
 function parseMarkdownTable(lines, startIndex){
@@ -334,7 +496,7 @@ function parseMarkdownTable(lines, startIndex){
   return { html, nextIndex: i };
 }
 function formatAIOutput(text){
-  const raw = String(text || '').replace(/\r/g,'').trim();
+  const raw = cleanAIText(text).replace(/\r/g,'').trim();
   if(!raw) return '<p>No answer returned.</p>';
   const bestMatch = raw.match(/Best Match:\s*(.+)$/im);
   let working = raw;
@@ -772,6 +934,8 @@ function wizardBack(role){ state.wizard[role].step = 1; renderWizard(role); }
 function wizardSave(role){
   const w = state.wizard[role];
   state[role].apis.unshift({name:w.name, description:w.description, endpoint:'/api/v1/run/'+slug(w.name), runs:0});
+  userStore[`${role}:${state[role].email.toLowerCase()}`] = state[role];
+  saveAppData();
   w.step = 3;
   renderWizard(role);
   renderMyApis(role);
@@ -797,6 +961,7 @@ function renderMyApis(role){
         <div class="body">
           <div class="field"><label>Input</label><input type="text" id="myapi-input-${role}-${i}" placeholder="Type an input to run this API with"></div>
           <button class="btn btn-primary small-btn" onclick="runMyApi('${role}', ${i})">Run</button>
+          <button class="btn btn-soft small-btn" onclick="runMyApiWithPage('${role}', ${i})">Analyze current page</button>
           ${role==='pro' ? `<button class="btn btn-soft small-btn" onclick="listOnMarket('${role}', ${i})">Sell in marketplace</button>` : `<span class="upgrade-note">Upgrade to Pro to sell this API.</span>`}
           <div id="myapi-result-${role}-${i}"></div>
         </div>
@@ -819,6 +984,32 @@ async function runMyApi(role, i){
     setError(targetId, err);
   }
 }
+
+async function runMyApiWithPage(role, i){
+  const api = state[role].apis[i];
+  const userNeed = document.getElementById(`myapi-input-${role}-${i}`).value.trim();
+  const targetId = `myapi-result-${role}-${i}`;
+  if(!tryUseCredit(role)) return;
+  document.getElementById(targetId).innerHTML = `<div class="loading-box"><span class="spinner"></span>Reading current page and asking your API...</div>`;
+  try{
+    const pageText = await getCurrentPageContext();
+    const input = `You are helping me decide on the current webpage.
+
+My requirement:
+${userNeed || 'Suggest the best option for me from this page.'}
+
+Current page content:
+${pageText.slice(0, 7000)}
+
+Give a clear recommendation with the best option first, short reasons, and anything I should avoid.`;
+    const output = await runGeneratedApi(api.description, input);
+    api.runs++;
+    saveAppData();
+    document.getElementById(targetId).innerHTML = `<div class="result-box">${formatAIOutput(output)}</div>`;
+  }catch(err){
+    setError(targetId, err);
+  }
+}
 function listOnMarket(role, i){
   if(role !== 'pro'){ showToast('Only Pro users can sell created APIs in the marketplace.'); return; }
   const api = state[role].apis[i];
@@ -831,6 +1022,7 @@ function listOnMarket(role, i){
   const p = parseFloat(price);
   if(isNaN(p) || p<=0){ showToast('Enter a valid price'); return; }
   state.admin.market.push({id:'mkt-'+slug(api.name)+'-'+Math.floor(Math.random()*999), seller: state[role].email, api: api.name, description: api.description, price:p, sold:0});
+  saveAppData();
   renderMarket('free'); renderMarket('pro'); renderAdminMarket();
   showToast(`Listed "${api.name}" for $${p} on the marketplace`);
 }
@@ -868,6 +1060,7 @@ function buyApi(role, listingId){
       sellerProfile.messages = sellerProfile.messages || [];
       sellerProfile.messages.unshift({from:'Marketplace', body:`${buyerEmail} has requested to buy your API "${item.api}". The request is now waiting for admin approval.`});
     }
+    saveAppData();
     renderPending();
     showToast('Buy request submitted — pending admin approval');
   }
@@ -877,11 +1070,15 @@ function buyApi(role, listingId){
 function renderPending(){
   const wrap = document.getElementById('pending-area');
   const list = state.admin.pending;
-  wrap.innerHTML = `<div class="card" style="padding:6px 0;overflow-x:auto;"><table>
-    <tr><th>Txn ID</th><th>Buyer / User</th><th>Seller</th><th>Requesting</th><th>Amount</th><th>Method</th><th>Date</th><th></th></tr>
+  wrap.innerHTML = `<div class="flex-between" style="margin-bottom:12px;">
+    <div><h2 class="section-title" style="margin:0;">Pending Approval</h2><p class="section-sub" style="margin:2px 0 0;">Refresh to pull the latest saved demo requests.</p></div>
+    <button class="btn btn-soft small-btn" onclick="adminRefresh()">↻ Reload requests</button>
+  </div>
+  <div class="card" style="padding:6px 0;overflow-x:auto;"><table>
+    <tr><th>Txn ID</th><th>Buyer / User</th><th>Seller</th><th>Requesting</th><th>Amount</th><th>Method</th><th>Date</th><th>Action</th></tr>
     ${list.length? list.map((t,i)=>`
       <tr><td class="mono">${t.id}</td><td>${t.buyer || t.user}</td><td>${t.seller || '—'}</td><td>${t.plan}</td><td>${t.amount}</td><td>${t.method}</td><td>${t.date}</td>
-      <td><button class="btn btn-primary small-btn" onclick="approveTxn(${i})">Approve</button></td></tr>`).join('')
+      <td><button class="btn btn-primary small-btn" onclick="approveTxn(${i})">Approve</button> <button class="btn btn-ghost small-btn" onclick="rejectTxn(${i})">Reject</button></td></tr>`).join('')
       : `<tr><td colspan="8" style="text-align:center;color:rgba(18,36,28,.5);padding:22px;">Nothing pending — you're all caught up.</td></tr>`}
   </table></div>`;
 }
@@ -915,34 +1112,62 @@ function deliverPurchasedApi(buyerEmail, apiName){
     sellerProfile.messages.unshift({from:'Admin', body:`Your API "${item.api}" has been approved for sale to ${buyerEmail}.`});
   }
 }
+
+function rejectTxn(i){
+  const t = state.admin.pending[i];
+  if(!t) return;
+  state.admin.pending.splice(i,1);
+  state.admin.approved.unshift({...t, status:'Rejected'});
+  const buyerEmail = t.buyer || t.user;
+  notifyUser(buyerEmail, 'free', {from:'Admin', body:`Your request "${t.plan}" (${t.amount}) was rejected. Please check the transaction information and send again if needed.`});
+  if(t.seller){
+    notifyUser(t.seller, 'pro', {from:'Admin', body:`The purchase request for your API "${t.apiName || t.plan}" from ${buyerEmail} was rejected by admin.`});
+  }
+  saveAppData();
+  renderPending(); renderApproved(); renderAdminMarket();
+  showToast(`Rejected ${t.id}`);
+}
+
 function approveTxn(i){
   const t = state.admin.pending[i];
+  if(!t) return;
+  const buyerEmail = t.buyer || t.user;
   const pass = 'ap-' + Math.random().toString(36).slice(2,8);
   state.admin.pending.splice(i,1);
-  state.admin.approved.unshift({...t, password: pass});
-  const profile = userStore['free:'+t.user.toLowerCase()] || freshProfile('free', t.user);
-  userStore['free:'+t.user.toLowerCase()] = profile;
+  state.admin.approved.unshift({...t, password: pass, status:'Approved'});
+  const profile = userStore['free:'+buyerEmail.toLowerCase()] || freshProfile('free', buyerEmail);
+  userStore['free:'+buyerEmail.toLowerCase()] = profile;
 
   if(/^Pro /.test(t.plan)){
-    ensureProProfileFromFree(t.user, pass);
-    profile.messages.unshift({from:'Admin', body:`Your ${t.plan} request (${t.amount}) has been approved. Use the Pro login with your email and this temporary password.`, password: pass});
+    ensureProProfileFromFree(buyerEmail, pass);
+    const proProfile = userStore['pro:'+buyerEmail.toLowerCase()];
+    const msg = {from:'Admin', body:`Your ${t.plan} request (${t.amount}) has been approved. Pro login email: ${buyerEmail}. Temporary password: ${pass}`, password: pass};
+    profile.messages = profile.messages || [];
+    profile.messages.unshift(msg);
+    if(proProfile){
+      proProfile.messages = proProfile.messages || [];
+      proProfile.messages.unshift({from:'Admin', body:`Your Pro account is active. Login email: ${buyerEmail}. Temporary password: ${pass}`, password: pass});
+    }
   } else if(/^API Purchase — /.test(t.plan)){
     const apiName = t.plan.replace('API Purchase — ','');
-    deliverPurchasedApi(t.user, apiName);
+    deliverPurchasedApi(buyerEmail, apiName);
+    profile.messages = profile.messages || [];
     profile.messages.unshift({from:'Admin', body:`Your purchase request for "${apiName}" from seller ${t.seller || 'Marketplace seller'} has been approved. The API is now available in your account.`});
   } else {
-    profile.messages.unshift({from:'Admin', body:`Your request "${t.plan}" (${t.amount}) has been approved.`, password: pass});
+    profile.messages = profile.messages || [];
+    profile.messages.unshift({from:'Admin', body:`Your request "${t.plan}" (${t.amount}) has been approved. Temporary password: ${pass}`, password: pass});
   }
 
+  saveAppData();
   renderPending(); renderApproved(); renderAdminMarket(); renderMarket('free'); renderMarket('pro');
-  showToast(`Approved ${t.id} — update sent to ${t.user}`);
+  showToast(`Approved ${t.id} — update sent to ${buyerEmail}`);
 }
 function renderApproved(){
   const wrap = document.getElementById('approved-area');
   const list = state.admin.approved;
   wrap.innerHTML = `<div class="card" style="padding:6px 0;overflow-x:auto;"><table>
     <tr><th>Txn ID</th><th>Buyer / User</th><th>Seller</th><th>Plan</th><th>Amount</th><th>Date</th><th>Status</th></tr>
-    ${list.length? list.map(t=>`<tr><td class="mono">${t.id}</td><td>${t.buyer || t.user}</td><td>${t.seller || '—'}</td><td>${t.plan}</td><td>${t.amount}</td><td>${t.date}</td><td><span class="status-chip status-approved">Approved</span></td></tr>`).join('')
+    ${list.length? list.map(t=>`<tr><td class="mono">${t.id}</td><td>${t.buyer || t.user}</td><td>${t.seller || '—'}</td><td>${t.plan}</td><td>${t.amount}</td><td>${t.date}</td><td><span class="status-chip ${t.status==='Rejected'?'':'status-approved'}">${t.status || 'Approved'}</span></td></tr>`).join('')
       : `<tr><td colspan="7" style="text-align:center;color:rgba(18,36,28,.5);padding:22px;">No approvals yet.</td></tr>`}
   </table></div>`;
 }
@@ -954,4 +1179,65 @@ function renderAdminMarket(){
       : `<tr><td colspan="5" style="text-align:center;color:rgba(18,36,28,.5);padding:22px;">No listings yet.</td></tr>`}
   </table></div>`;
 }
+
+function parseInlineArgs(argText, clickedEl){
+  if(!argText.trim()) return [];
+  const args = [];
+  let current = '', quote = null;
+  for(let i=0;i<argText.length;i++){
+    const ch = argText[i];
+    if(quote){
+      if(ch === quote){ quote = null; }
+      else { current += ch; }
+    }else if(ch === "'" || ch === '"'){
+      quote = ch;
+    }else if(ch === ','){
+      args.push(current.trim());
+      current = '';
+    }else{
+      current += ch;
+    }
+  }
+  if(current.length || argText.endsWith(',')) args.push(current.trim());
+  return args.map(a=>{
+    if(a === 'this') return clickedEl;
+    if(a === 'true') return true;
+    if(a === 'false') return false;
+    if(/^[-]?\d+(\.\d+)?$/.test(a)) return Number(a);
+    return a;
+  });
+}
+function runInlineAction(code, clickedEl){
+  code = String(code || '').trim().replace(/;$/,'');
+  const docClick = code.match(/^document\.getElementById\(['"]([^'"]+)['"]\)\.click\(\)$/);
+  if(docClick){ const target = document.getElementById(docClick[1]); if(target) target.click(); return true; }
+  const match = code.match(/^([A-Za-z_$][\w$]*)\((.*)\)$/);
+  if(!match) return false;
+  const fnName = match[1];
+  const allowed = {go,loginFree,loginPro,loginAdmin,switchTab,openDrawer,closeDrawer,logout,drawerPanel,reloadUserMessages,adminRefresh,startUpgrade,sendUpgradeRequest,saveInfo,fillCurrentPageForm,runAnalyzer,runCurrency,runWeather,runQuote,runGrammar,runPdfQuestion,resetWizard,nextStep,testWizard,saveWizard,runMyApi,runMyApiWithPage,listOnMarket,buyApi,approveTxn,rejectTxn};
+  if(!allowed[fnName]) return false;
+  allowed[fnName](...parseInlineArgs(match[2], clickedEl));
+  return true;
+}
+document.addEventListener('click', (event)=>{
+  const el = event.target.closest('[onclick]');
+  if(!el) return;
+  if(runInlineAction(el.getAttribute('onclick'), el)){
+    event.preventDefault();
+    event.stopPropagation();
+  }
+}, true);
+document.addEventListener('change', (event)=>{
+  const el = event.target;
+  if(el && /^pdf-file-/.test(el.id || '') && el.files && el.files[0]){
+    handlePdfUpload(el.id.replace('pdf-file-',''), el.files[0]);
+  }
+}, true);
+document.addEventListener('keydown', (event)=>{
+  if(event.key === 'Enter' && event.target && /^pdf-question-/.test(event.target.id || '')){
+    event.preventDefault();
+    runPdfQuestion(event.target.id.replace('pdf-question-',''));
+  }
+}, true);
+
 window.addEventListener('load', ()=>{ try{ renderMarket('free'); renderMarket('pro'); }catch(e){} });

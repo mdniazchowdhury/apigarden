@@ -31,7 +31,9 @@
     if(/\b(email|e mail|mail address)\b/.test(label)) return data.email;
     if(/\b(phone|mobile|contact number|telephone|cell)\b/.test(label)) return data.phone;
     if(/\b(gender|sex)\b/.test(label)) return data.gender;
-    if(/\b(location|city|country|address|area|district)\b/.test(label)) return data.location || data.address;
+    if(/\bcountry\b/.test(label)) return data.country;
+    if(/\b(city|town|district)\b/.test(label)) return data.city || data.location;
+    if(/\b(location|address|area)\b/.test(label)) return data.location || data.address || data.city;
     if(/\b(date of birth|dob|birth date|birthday)\b/.test(label)) return data.dob;
     return '';
   }

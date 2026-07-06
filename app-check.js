@@ -13,7 +13,7 @@ const SEEDED_EMAIL = 'ishita.chowdhury@northsouth.edu';
 function freshProfile(role, email){
   const base = {
     email,
-    savedInfo: {name:'', email, phone:'', gender:'', location:'', dob:'', address:''},
+    savedInfo: {name:'', email, phone:'', gender:'', country:'', city:'', location:'', dob:'', address:''},
     apis: [], pdfText: '', pdfName: '',
     chatlog: { grammar: [], pdf: [] },
     seeded: email.toLowerCase() === SEEDED_EMAIL
@@ -179,11 +179,13 @@ function renderDrawer(role){
       <p class="muted" style="font-size:13px;margin:0;">${state.free.email}</p>
       <h4>Account</h4>
       <div class="drawer-item" onclick="drawerPanel('free-usage')">📊 Free runs remaining</div>
+      <div class="drawer-item" onclick="drawerPanel('free-analyzer')">🔎 Analyzer</div>
       <h4>Transactions</h4>
       <div class="drawer-item" onclick="drawerPanel('free-payments')">💳 My Payments</div>
       <div class="drawer-item" onclick="drawerPanel('free-plans')">🌿 Our Plans</div>
       <h4>Support</h4>
       <div class="drawer-item" onclick="drawerPanel('free-inbox')">✉️ Admin Messages ${state.free.messages.length?`<span class="badge">${state.free.messages.length} new</span>`:''}</div>
+      <div class="drawer-item" onclick="reloadUserMessages('free')">↻ Reload admin messages</div>
       <div class="drawer-item" onclick="drawerPanel('free-form')">📝 Saved info (autofill)</div>
       <h4>Session</h4>
       <div class="drawer-item" onclick="logout()">🚪 Log out / switch role</div>
@@ -195,8 +197,10 @@ function renderDrawer(role){
       <h4>Account</h4>
       <div class="drawer-item" onclick="drawerPanel('pro-form')">📝 Saved info (autofill)</div>
       <div class="drawer-item" onclick="drawerPanel('pro-transactions')">📈 Transactions</div>
+      <div class="drawer-item" onclick="drawerPanel('pro-analyzer')">🔎 Analyzer</div>
       <h4>Support</h4>
-      <div class="drawer-item" onclick="drawerPanel('pro-inbox')">✉️ Notifications ${state.pro.messages.length?`<span class="badge">${state.pro.messages.length} new</span>`:''}</div>
+      <div class="drawer-item" onclick="drawerPanel('pro-inbox')">✉️ Admin Messages ${state.pro.messages.length?`<span class="badge">${state.pro.messages.length} new</span>`:''}</div>
+      <div class="drawer-item" onclick="reloadUserMessages('pro')">↻ Reload admin messages</div>
       <h4>Session</h4>
       <div class="drawer-item" onclick="logout()">🚪 Log out / switch role</div>
       <div id="drawer-sub" style="margin-top:12px;"></div>`;
@@ -204,6 +208,7 @@ function renderDrawer(role){
     el.innerHTML = `
       <h3 style="margin:6px 0 2px;">Menu</h3>
       <p class="muted" style="font-size:13px;margin:0;">admin@northsouth.edu</p>
+      <div class="drawer-item" onclick="adminRefresh()">↻ Reload requests</div>
       <div class="drawer-item" onclick="logout()">🚪 Log out / switch role</div>
       <div id="drawer-sub" style="margin-top:12px;"></div>`;
   }
@@ -229,9 +234,13 @@ function drawerPanel(name){
   } else if(name==='free-plans'){
     sub.innerHTML = plansHTML();
   } else if(name==='free-inbox'){
-    sub.innerHTML = messagesHTML(state.free.messages);
+    reloadUserMessages('free', false);
+    sub.innerHTML = `<button class="btn btn-soft small-btn" style="margin-bottom:10px;" onclick="reloadUserMessages('free')">↻ Reload messages</button>` + messagesHTML(state.free.messages);
   } else if(name==='free-form'){
     sub.innerHTML = formInfoHTML('free');
+  } else if(name==='free-analyzer'){
+    sub.innerHTML = analyzerHTML('free');
+    loadAnalyzerUrl('free');
   } else if(name==='pro-form'){
     sub.innerHTML = formInfoHTML('pro');
   } else if(name==='pro-transactions'){
@@ -240,9 +249,73 @@ function drawerPanel(name){
       ${state.pro.transactions.map(t=>`<tr><td>${t.api}</td><td>${t.buyer}</td><td>$${t.price}</td></tr>`).join('')}
     </table>` : `<p class="hint" style="margin:0;">No sales yet.</p>`) + `</div>`;
   } else if(name==='pro-inbox'){
-    sub.innerHTML = messagesHTML(state.pro.messages);
+    reloadUserMessages('pro', false);
+    sub.innerHTML = `<button class="btn btn-soft small-btn" style="margin-bottom:10px;" onclick="reloadUserMessages('pro')">↻ Reload messages</button>` + messagesHTML(state.pro.messages);
+  } else if(name==='pro-analyzer'){
+    sub.innerHTML = analyzerHTML('pro');
+    loadAnalyzerUrl('pro');
   }
 }
+
+function reloadUserMessages(role, show=true){
+  loadAppData();
+  const key = `${role}:${state[role].email.toLowerCase()}`;
+  const latest = userStore[key];
+  if(latest){
+    state[role].messages = latest.messages || [];
+    state[role].payments = latest.payments || state[role].payments;
+    state[role].transactions = latest.transactions || state[role].transactions;
+    state[role].apis = latest.apis || state[role].apis;
+  }
+  renderDrawer(role);
+  if(document.getElementById('drawer-sub')){
+    const sub = document.getElementById('drawer-sub');
+    sub.innerHTML = `<button class="btn btn-soft small-btn" style="margin-bottom:10px;" onclick="reloadUserMessages('${role}')">↻ Reload messages</button>` + messagesHTML(state[role].messages || []);
+  }
+  if(show) showToast('Messages reloaded');
+}
+function analyzerHTML(role){
+  return `<div class="card" style="padding:16px;">
+    <h4 class="h-inline">Current Page Analyzer</h4>
+    <p class="hint" style="margin-top:0;">Open APIGarden as a Chrome extension on any webpage, then ask what you want to know about that page.</p>
+    <div class="field"><label>Current page URL</label><input type="text" id="${role}-an-url" readonly placeholder="Open as extension to detect URL"></div>
+    <div class="field"><label>Your question</label><textarea id="${role}-an-q" rows="4" placeholder="Example: Which hotel option is best for me and why?"></textarea></div>
+    <button class="btn btn-primary small-btn" onclick="runAnalyzer('${role}')">Analyze this page</button>
+    <div id="${role}-an-result"></div>
+  </div>`;
+}
+async function loadAnalyzerUrl(role){
+  try{
+    const response = await sendToActiveTab({type:'APIGARDEN_GET_PAGE_CONTEXT'});
+    const urlMatch = String(response?.text || '').match(/URL:\s*(.+)/);
+    const input = document.getElementById(`${role}-an-url`);
+    if(input) input.value = urlMatch ? urlMatch[1].trim() : 'Current page detected';
+  }catch(err){
+    const input = document.getElementById(`${role}-an-url`);
+    if(input) input.value = 'Open APIGarden from the Chrome extension on a webpage';
+  }
+}
+async function runAnalyzer(role){
+  const q = document.getElementById(`${role}-an-q`)?.value.trim();
+  const targetId = `${role}-an-result`;
+  if(!q){ showToast('Write a question first'); return; }
+  if(!tryUseCredit(role)) return;
+  document.getElementById(targetId).innerHTML = `<div class="loading-box"><span class="spinner"></span>Reading current page and analyzing...</div>`;
+  try{
+    const pageText = await getCurrentPageContext();
+    const input = `Question: ${q}
+
+Current webpage:
+${pageText.slice(0, 8500)}
+
+Answer clearly. Start with the best answer or best option, then give short reasons. Do not use markdown bold stars.`;
+    const output = await runGeneratedApi('Analyze the current webpage and answer the user question using the page content.', input);
+    document.getElementById(targetId).innerHTML = `<div class="result-box">${formatAIOutput(output)}</div>`;
+  }catch(err){
+    setError(targetId, err);
+  }
+}
+
 function plansHTML(){
   return `<div class="plan-grid">
     <div class="card plan-card"><span class="badge tag">Current</span><h4 class="h-inline">Free Trial</h4><div class="plan-price">৳0</div><ul><li>5 ready-made APIs</li><li>6 free AI runs</li></ul></div>
@@ -262,7 +335,7 @@ function startUpgrade(plan, amount){
 }
 function messagesHTML(list){
   if(!list.length) return `<div class="card" style="padding:16px;text-align:center;color:rgba(18,36,28,.5);font-size:13.5px;">No messages yet.</div>`;
-  return list.map(m=>`<div class="card msg-item"><div class="from">From ${escapeHtml(m.from || 'Admin')}</div><div class="body">${m.body}</div>${m.password? `<span class="pw">${m.password}</span>`:''}</div>`).join('');
+  return list.map(m=>`<div class="card msg-item"><div class="from">From ${escapeHtml(m.from || 'Admin')}</div><div class="body">${escapeHtml(cleanAIText(m.body || ''))}</div>${m.password? `<span class="pw">${escapeHtml(m.password)}</span>`:''}</div>`).join('');
 }
 function formInfoHTML(role){
   const info = state[role].savedInfo;
@@ -273,7 +346,9 @@ function formInfoHTML(role){
       <div class="field"><label>Email</label><input type="text" id="${role}-si-email" value="${escapeHtml(info.email || '')}"></div>
       <div class="field"><label>Phone</label><input type="text" id="${role}-si-phone" value="${escapeHtml(info.phone || '')}"></div>
       <div class="field"><label>Gender</label><input type="text" id="${role}-si-gender" value="${escapeHtml(info.gender || '')}" placeholder="e.g. Female"></div>
-      <div class="field"><label>Location</label><input type="text" id="${role}-si-location" value="${escapeHtml(info.location || info.address || '')}" placeholder="e.g. Dhaka, Bangladesh"></div>
+      <div class="field"><label>Country</label><input type="text" id="${role}-si-country" value="${escapeHtml(info.country || '')}" placeholder="e.g. Bangladesh"></div>
+      <div class="field"><label>City</label><input type="text" id="${role}-si-city" value="${escapeHtml(info.city || '')}" placeholder="e.g. Dhaka"></div>
+      <div class="field"><label>Location / Address</label><input type="text" id="${role}-si-location" value="${escapeHtml(info.location || info.address || '')}" placeholder="e.g. Bashundhara R/A, Dhaka"></div>
       <div class="field"><label>Date of birth</label><input type="text" id="${role}-si-dob" value="${escapeHtml(info.dob || '')}" placeholder="YYYY-MM-DD"></div>
     </div>
     <button class="btn btn-soft small-btn" onclick="saveInfo('${role}')">Save info</button>
@@ -286,6 +361,8 @@ function saveInfo(role){
     email: document.getElementById(`${role}-si-email`).value,
     phone: document.getElementById(`${role}-si-phone`).value,
     gender: document.getElementById(`${role}-si-gender`).value,
+    country: document.getElementById(`${role}-si-country`).value,
+    city: document.getElementById(`${role}-si-city`).value,
     location: document.getElementById(`${role}-si-location`).value,
     dob: document.getElementById(`${role}-si-dob`).value,
     address: document.getElementById(`${role}-si-location`).value
@@ -397,6 +474,7 @@ function seededApisHTML(role){
 function setLoading(targetId){ document.getElementById(targetId).innerHTML = `<div class="loading-box"><span class="spinner"></span>Working...</div>`; }
 function setError(targetId, err){ document.getElementById(targetId).innerHTML = `<div class="error-box">⚠ ${escapeHtml(err.message || String(err))}</div>`; }
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function cleanAIText(value){ return String(value || '').replace(/\*\*/g,'').replace(/__([^_]+)__/g,'$1').replace(/\*([^*\n]+)\*/g,'$1'); }
 
 function nl2p(line){ return `<p>${escapeHtml(line)}</p>`; }
 function parseMarkdownTable(lines, startIndex){
@@ -418,7 +496,7 @@ function parseMarkdownTable(lines, startIndex){
   return { html, nextIndex: i };
 }
 function formatAIOutput(text){
-  const raw = String(text || '').replace(/\r/g,'').trim();
+  const raw = cleanAIText(text).replace(/\r/g,'').trim();
   if(!raw) return '<p>No answer returned.</p>';
   const bestMatch = raw.match(/Best Match:\s*(.+)$/im);
   let working = raw;
@@ -1052,26 +1130,37 @@ function rejectTxn(i){
 
 function approveTxn(i){
   const t = state.admin.pending[i];
+  if(!t) return;
+  const buyerEmail = t.buyer || t.user;
   const pass = 'ap-' + Math.random().toString(36).slice(2,8);
   state.admin.pending.splice(i,1);
-  state.admin.approved.unshift({...t, password: pass});
-  const profile = userStore['free:'+t.user.toLowerCase()] || freshProfile('free', t.user);
-  userStore['free:'+t.user.toLowerCase()] = profile;
+  state.admin.approved.unshift({...t, password: pass, status:'Approved'});
+  const profile = userStore['free:'+buyerEmail.toLowerCase()] || freshProfile('free', buyerEmail);
+  userStore['free:'+buyerEmail.toLowerCase()] = profile;
 
   if(/^Pro /.test(t.plan)){
-    ensureProProfileFromFree(t.user, pass);
-    profile.messages.unshift({from:'Admin', body:`Your ${t.plan} request (${t.amount}) has been approved. Use the Pro login with your email and this temporary password.`, password: pass});
+    ensureProProfileFromFree(buyerEmail, pass);
+    const proProfile = userStore['pro:'+buyerEmail.toLowerCase()];
+    const msg = {from:'Admin', body:`Your ${t.plan} request (${t.amount}) has been approved. Pro login email: ${buyerEmail}. Temporary password: ${pass}`, password: pass};
+    profile.messages = profile.messages || [];
+    profile.messages.unshift(msg);
+    if(proProfile){
+      proProfile.messages = proProfile.messages || [];
+      proProfile.messages.unshift({from:'Admin', body:`Your Pro account is active. Login email: ${buyerEmail}. Temporary password: ${pass}`, password: pass});
+    }
   } else if(/^API Purchase — /.test(t.plan)){
     const apiName = t.plan.replace('API Purchase — ','');
-    deliverPurchasedApi(t.user, apiName);
+    deliverPurchasedApi(buyerEmail, apiName);
+    profile.messages = profile.messages || [];
     profile.messages.unshift({from:'Admin', body:`Your purchase request for "${apiName}" from seller ${t.seller || 'Marketplace seller'} has been approved. The API is now available in your account.`});
   } else {
-    profile.messages.unshift({from:'Admin', body:`Your request "${t.plan}" (${t.amount}) has been approved.`, password: pass});
+    profile.messages = profile.messages || [];
+    profile.messages.unshift({from:'Admin', body:`Your request "${t.plan}" (${t.amount}) has been approved. Temporary password: ${pass}`, password: pass});
   }
 
   saveAppData();
   renderPending(); renderApproved(); renderAdminMarket(); renderMarket('free'); renderMarket('pro');
-  showToast(`Approved ${t.id} — update sent to ${t.user}`);
+  showToast(`Approved ${t.id} — update sent to ${buyerEmail}`);
 }
 function renderApproved(){
   const wrap = document.getElementById('approved-area');
@@ -1090,4 +1179,65 @@ function renderAdminMarket(){
       : `<tr><td colspan="5" style="text-align:center;color:rgba(18,36,28,.5);padding:22px;">No listings yet.</td></tr>`}
   </table></div>`;
 }
+
+function parseInlineArgs(argText, clickedEl){
+  if(!argText.trim()) return [];
+  const args = [];
+  let current = '', quote = null;
+  for(let i=0;i<argText.length;i++){
+    const ch = argText[i];
+    if(quote){
+      if(ch === quote){ quote = null; }
+      else { current += ch; }
+    }else if(ch === "'" || ch === '"'){
+      quote = ch;
+    }else if(ch === ','){
+      args.push(current.trim());
+      current = '';
+    }else{
+      current += ch;
+    }
+  }
+  if(current.length || argText.endsWith(',')) args.push(current.trim());
+  return args.map(a=>{
+    if(a === 'this') return clickedEl;
+    if(a === 'true') return true;
+    if(a === 'false') return false;
+    if(/^[-]?\d+(\.\d+)?$/.test(a)) return Number(a);
+    return a;
+  });
+}
+function runInlineAction(code, clickedEl){
+  code = String(code || '').trim().replace(/;$/,'');
+  const docClick = code.match(/^document\.getElementById\(['"]([^'"]+)['"]\)\.click\(\)$/);
+  if(docClick){ const target = document.getElementById(docClick[1]); if(target) target.click(); return true; }
+  const match = code.match(/^([A-Za-z_$][\w$]*)\((.*)\)$/);
+  if(!match) return false;
+  const fnName = match[1];
+  const allowed = {go,loginFree,loginPro,loginAdmin,switchTab,openDrawer,closeDrawer,logout,drawerPanel,reloadUserMessages,adminRefresh,startUpgrade,sendUpgradeRequest,saveInfo,fillCurrentPageForm,runAnalyzer,runCurrency,runWeather,runQuote,runGrammar,runPdfQuestion,resetWizard,nextStep,testWizard,saveWizard,runMyApi,runMyApiWithPage,listOnMarket,buyApi,approveTxn,rejectTxn};
+  if(!allowed[fnName]) return false;
+  allowed[fnName](...parseInlineArgs(match[2], clickedEl));
+  return true;
+}
+document.addEventListener('click', (event)=>{
+  const el = event.target.closest('[onclick]');
+  if(!el) return;
+  if(runInlineAction(el.getAttribute('onclick'), el)){
+    event.preventDefault();
+    event.stopPropagation();
+  }
+}, true);
+document.addEventListener('change', (event)=>{
+  const el = event.target;
+  if(el && /^pdf-file-/.test(el.id || '') && el.files && el.files[0]){
+    handlePdfUpload(el.id.replace('pdf-file-',''), el.files[0]);
+  }
+}, true);
+document.addEventListener('keydown', (event)=>{
+  if(event.key === 'Enter' && event.target && /^pdf-question-/.test(event.target.id || '')){
+    event.preventDefault();
+    runPdfQuestion(event.target.id.replace('pdf-question-',''));
+  }
+}, true);
+
 window.addEventListener('load', ()=>{ try{ renderMarket('free'); renderMarket('pro'); }catch(e){} });
