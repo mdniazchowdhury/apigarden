@@ -165,7 +165,8 @@ Rules:
 // Note: Render may clear this if the service restarts, which is fine for a classroom demo.
 const demoState = {
   pending: [],
-  approved: []
+  approved: [],
+  userMessages: {}
 };
 
 function cleanTxn(txn = {}) {
@@ -186,6 +187,36 @@ function cleanTxn(txn = {}) {
 app.get("/api/demo-state", (req, res) => {
   res.json(demoState);
 });
+
+
+function messageKey(role, email) {
+  return `${String(role || "free").toLowerCase()}:${String(email || "").toLowerCase()}`;
+}
+
+function cleanMessage(msg = {}) {
+  return {
+    from: String(msg.from || "Admin"),
+    body: String(msg.body || ""),
+    password: msg.password ? String(msg.password) : "",
+    date: String(msg.date || new Date().toISOString())
+  };
+}
+
+app.get("/api/demo-state/messages", (req, res) => {
+  const role = String(req.query.role || "free");
+  const email = String(req.query.email || "");
+  const key = messageKey(role, email);
+  res.json({ ok: true, messages: demoState.userMessages[key] || [] });
+});
+
+app.post("/api/demo-state/messages", (req, res) => {
+  const { role, email, message } = req.body || {};
+  const key = messageKey(role || "free", email || "");
+  if (!demoState.userMessages[key]) demoState.userMessages[key] = [];
+  demoState.userMessages[key].unshift(cleanMessage(message));
+  res.json({ ok: true, messages: demoState.userMessages[key] });
+});
+
 
 app.post("/api/demo-state/pending", (req, res) => {
   const txn = cleanTxn(req.body || {});

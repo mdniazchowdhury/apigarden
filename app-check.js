@@ -95,6 +95,18 @@ async function syncAdminToBackend(){
     return true;
   }catch(e){ return false; }
 }
+
+async function pushUserMessageToBackend(role, email, message){
+  try{
+    await fetch('/api/demo-state/messages', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({role, email, message})
+    });
+    return true;
+  }catch(e){ return false; }
+}
+
 async function pushPendingToBackend(txn){
   try{
     await fetch('/api/demo-state/pending', {
@@ -1175,15 +1187,20 @@ function rejectTxn(i){
   state.admin.pending.splice(i,1);
   state.admin.approved.unshift({...t, status:'Rejected'});
   const buyerEmail = t.buyer || t.user;
-  notifyUser(buyerEmail, 'free', {from:'Admin', body:`Your request "${t.plan}" (${t.amount}) was rejected. Please check the transaction information and send again if needed.`});
+  const msg = {from:'Admin', body:`Your request "${t.plan}" (${t.amount}) was rejected. Please check the transaction information and send again if needed.`};
+  notifyUser(buyerEmail, 'free', msg);
+  pushUserMessageToBackend('free', buyerEmail, msg);
   if(t.seller){
-    notifyUser(t.seller, 'pro', {from:'Admin', body:`The purchase request for your API "${t.apiName || t.plan}" from ${buyerEmail} was rejected by admin.`});
+    const sellerMsg = {from:'Admin', body:`The purchase request for your API "${t.apiName || t.plan}" from ${buyerEmail} was rejected by admin.`};
+    notifyUser(t.seller, 'pro', sellerMsg);
+    pushUserMessageToBackend('pro', t.seller, sellerMsg);
   }
   saveAppData();
   syncAdminToBackend();
   renderPending(); renderApproved(); renderAdminMarket();
   showToast(`Rejected ${t.id}`);
 }
+
 
 function approveTxn(i){
   const t = state.admin.pending[i];
@@ -1201,18 +1218,25 @@ function approveTxn(i){
     const msg = {from:'Admin', body:`Your ${t.plan} request (${t.amount}) has been approved. Pro login email: ${buyerEmail}. Temporary password: ${pass}`, password: pass};
     profile.messages = profile.messages || [];
     profile.messages.unshift(msg);
+    pushUserMessageToBackend('free', buyerEmail, msg);
     if(proProfile){
       proProfile.messages = proProfile.messages || [];
-      proProfile.messages.unshift({from:'Admin', body:`Your Pro account is active. Login email: ${buyerEmail}. Temporary password: ${pass}`, password: pass});
+      const proMsg = {from:'Admin', body:`Your Pro account is active. Login email: ${buyerEmail}. Temporary password: ${pass}`, password: pass};
+      proProfile.messages.unshift(proMsg);
+      pushUserMessageToBackend('pro', buyerEmail, proMsg);
     }
   } else if(/^API Purchase — /.test(t.plan)){
     const apiName = t.plan.replace('API Purchase — ','');
     deliverPurchasedApi(buyerEmail, apiName);
     profile.messages = profile.messages || [];
-    profile.messages.unshift({from:'Admin', body:`Your purchase request for "${apiName}" from seller ${t.seller || 'Marketplace seller'} has been approved. The API is now available in your account.`});
+    const msg = {from:'Admin', body:`Your purchase request for "${apiName}" from seller ${t.seller || 'Marketplace seller'} has been approved. The API is now available in your account.`};
+    profile.messages.unshift(msg);
+    pushUserMessageToBackend('free', buyerEmail, msg);
   } else {
     profile.messages = profile.messages || [];
-    profile.messages.unshift({from:'Admin', body:`Your request "${t.plan}" (${t.amount}) has been approved. Temporary password: ${pass}`, password: pass});
+    const msg = {from:'Admin', body:`Your request "${t.plan}" (${t.amount}) has been approved. Temporary password: ${pass}`, password: pass};
+    profile.messages.unshift(msg);
+    pushUserMessageToBackend('free', buyerEmail, msg);
   }
 
   saveAppData();

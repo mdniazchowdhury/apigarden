@@ -1,6 +1,7 @@
 
 const $ = (id) => document.getElementById(id);
 const STORE_KEY = 'apigarden_extension_store_v1';
+const DEFAULT_BACKEND_URL = 'https://api-garden.onrender.com';
 const ISHITA = 'ishita.chowdhury@northsouth.edu';
 
 const defaultApis = [
@@ -39,7 +40,7 @@ function storageGet(){
   return new Promise(resolve=>{
     chrome.storage.local.get([STORE_KEY], res=>{
       resolve(res[STORE_KEY] || {
-        backendUrl:'',
+        backendUrl: DEFAULT_BACKEND_URL,
         session:null,
         users:{},
         admin:{pending:[], approved:[]}
@@ -56,6 +57,49 @@ function storageSet(store){
 function backendBase(){
   return String(state.store?.backendUrl || '').trim().replace(/\/$/, '');
 }
+
+async function pullMessagesFromBackend(role, email){
+  const base = backendBase();
+  if(!base) return false;
+  try{
+    const res = await fetch(`${base}/api/demo-state/messages?role=${encodeURIComponent(role)}&email=${encodeURIComponent(email)}`);
+    if(!res.ok) return false;
+    const data = await res.json();
+    if(Array.isArray(data.messages)){
+      const k = key(role, email);
+      const u = state.store.users[k] || freshUser(role, email);
+      const existing = Array.isArray(u.messages) ? u.messages : [];
+      const merged = [...data.messages, ...existing];
+      const seen = new Set();
+      u.messages = merged.filter(m=>{
+        const id = `${m.from || ''}|${m.body || ''}|${m.password || ''}`;
+        if(seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      });
+      state.store.users[k] = u;
+      if(state.role === role && state.email === email){
+        state.store.users[k] = u;
+      }
+      await save();
+      return true;
+    }
+    return false;
+  }catch(e){ return false; }
+}
+async function pushUserMessageToBackend(role, email, message){
+  const base = backendBase();
+  if(!base) return false;
+  try{
+    await fetch(`${base}/api/demo-state/messages`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({role, email, message})
+    });
+    return true;
+  }catch(e){ return false; }
+}
+
 async function pushPendingToBackend(txn){
   const base = backendBase();
   if(!base) return false;
@@ -108,6 +152,7 @@ function freshUser(role,email){
 }
 async function load(){
   state.store = await storageGet();
+  if(!state.store.backendUrl) state.store.backendUrl = DEFAULT_BACKEND_URL;
   if(state.store.session && state.store.session.role && state.store.session.email){
     state.role = state.store.session.role;
     state.email = state.store.session.email;
@@ -234,7 +279,7 @@ function infoView(){
     <h2>Saved Info</h2>
     <p>Save your common details, then fill matching fields on the current Chrome page.</p>
     <label>Backend URL / Render link</label>
-    <input id="backendUrl" value="${esc(state.store.backendUrl || '')}" placeholder="https://your-app.onrender.com">
+    <input id="backendUrl" value="${esc(state.store.backendUrl || '')}" placeholder="https://api-garden.onrender.com">
     <div class="grid2">
       <div><label>Name</label><input id="info-name" value="${esc(i.name)}"></div>
       <div><label>Email</label><input id="info-email" value="${esc(i.email || u.email)}"></div>
@@ -275,7 +320,7 @@ function analyzerView(){
     <label>Current page URL</label>
     <input id="currentUrl" readonly placeholder="Detecting current tab...">
     <label>Backend URL / Render link</label>
-    <input id="an-backend" value="${esc(state.store.backendUrl || '')}" placeholder="https://your-app.onrender.com">
+    <input id="an-backend" value="${esc(state.store.backendUrl || '')}" placeholder="https://api-garden.onrender.com">
     <label>Your question</label>
     <textarea id="an-question" rows="4" placeholder="Example: Which hotel option is better for me?"></textarea>
     <div class="actions">
@@ -311,7 +356,7 @@ function upgradeView(){
     <h2>Upgrade Request</h2>
     <p>Send a Pro Monthly payment request to admin. To show this request in the website admin panel, paste the Render backend URL once.</p>
     <label>Backend URL / Render link</label>
-    <input id="upgrade-backend" value="${esc(state.store.backendUrl || '')}" placeholder="https://your-app.onrender.com">
+    <input id="upgrade-backend" value="${esc(state.store.backendUrl || '')}" placeholder="https://api-garden.onrender.com">
     <div class="actions"><button class="btn primary" data-action="requestUpgrade">Send Pro Monthly Request</button></div>
   </div>`;
 }
@@ -320,7 +365,7 @@ function renderAdmin(){
   const approved = state.store.admin.approved || [];
   appShell(`<div class="card">
     <label>Backend URL / Render link</label>
-    <input id="admin-backend" value="${esc(state.store.backendUrl || '')}" placeholder="https://your-app.onrender.com">
+    <input id="admin-backend" value="${esc(state.store.backendUrl || '')}" placeholder="https://api-garden.onrender.com">
     <div class="actions" style="margin-top:8px"><button class="btn soft" data-action="reloadAdmin">↻ Reload requests</button></div>
     <h2>Pending Approval</h2>
     ${pending.length ? pending.map((t,i)=>`<div class="card"><b>${esc(t.plan)}</b><p>${esc(t.buyer || t.user)} · ${esc(t.amount)} · ${esc(t.date)}</p><div class="actions"><button class="btn primary" data-action="approve" data-index="${i}">Approve</button><button class="btn danger" data-action="reject" data-index="${i}">Reject</button></div></div>`).join('') : `<p>No pending requests.</p>`}
@@ -530,7 +575,9 @@ Rules:
 }
 async function reloadMessages(){
   state.store = await storageGet();
-  toast('Messages reloaded');
+  if(!state.store.backendUrl) state.store.backendUrl = DEFAULT_BACKEND_URL;
+  const synced = await pullMessagesFromBackend(state.role, state.email);
+  toast(synced ? 'Admin messages reloaded from website' : 'Messages reloaded locally');
   render();
 }
 async function requestUpgrade(){
@@ -561,8 +608,12 @@ async function approve(index){
   const proK = key('pro', t.buyer || t.user);
   const free = state.store.users[freeK] || freshUser('free', t.buyer || t.user);
   const pro = state.store.users[proK] || freshUser('pro', t.buyer || t.user);
-  free.messages.unshift({from:'Admin', body:`Your ${t.plan} request has been approved. Pro login email: ${t.buyer || t.user}. Temporary password: ${pass}`, password:pass});
-  pro.messages.unshift({from:'Admin', body:`Your Pro account is active. Temporary password: ${pass}`, password:pass});
+  const freeMsg = {from:'Admin', body:`Your ${t.plan} request has been approved. Pro login email: ${t.buyer || t.user}. Temporary password: ${pass}`, password:pass};
+  const proMsg = {from:'Admin', body:`Your Pro account is active. Temporary password: ${pass}`, password:pass};
+  free.messages.unshift(freeMsg);
+  pro.messages.unshift(proMsg);
+  pushUserMessageToBackend('free', t.buyer || t.user, freeMsg);
+  pushUserMessageToBackend('pro', t.buyer || t.user, proMsg);
   pro.password = pass;
   pro.savedInfo = {...free.savedInfo, email:free.email};
   pro.apis = [...(free.apis || []), ...(pro.apis || [])];
@@ -580,7 +631,9 @@ async function reject(index){
   state.store.admin.approved.unshift({...t,status:'Rejected'});
   const freeK = key('free', t.buyer || t.user);
   const free = state.store.users[freeK] || freshUser('free', t.buyer || t.user);
-  free.messages.unshift({from:'Admin', body:`Your ${t.plan} request was rejected. Please check your transaction details and try again.`});
+  const rejectMsg = {from:'Admin', body:`Your ${t.plan} request was rejected. Please check your transaction details and try again.`};
+  free.messages.unshift(rejectMsg);
+  pushUserMessageToBackend('free', t.buyer || t.user, rejectMsg);
   state.store.users[freeK] = free;
   await save();
   await syncAdminToBackend();
