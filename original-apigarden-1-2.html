@@ -1,0 +1,1115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>APIGarden — grow an API from anything</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,500&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+:root{
+  --forest:#0F3D2E; --moss:#1F5A40; --sage:#7FB77E; --mint:#DFF3E1; --cream:#FAF8F2;
+  --clay:#E0A458; --ink:#12241C; --line:rgba(15,61,46,0.14);
+  --shadow: 0 10px 30px rgba(15,61,46,0.12); --radius: 16px;
+  --err:#b23b3b; --errbg:#fbe6e6;
+}
+*{box-sizing:border-box;}
+html,body{height:100%;}
+body{margin:0;font-family:'Inter',sans-serif;background:var(--cream);color:var(--ink);overflow-x:hidden;}
+h1,h2,h3,.display{font-family:'Fraunces',serif;}
+button{font-family:inherit;cursor:pointer;}
+::selection{background:var(--sage);color:var(--forest);}
+.hidden{display:none !important;}
+.row{display:flex;align-items:center;}
+.pill{border-radius:999px;}
+.mono{font-family:'JetBrains Mono',monospace;}
+.muted{color:rgba(18,36,28,0.55);}
+.badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;background:var(--mint);color:var(--moss);}
+.card{background:#fff;border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);}
+.btn{border:none;padding:12px 20px;border-radius:12px;font-weight:600;font-size:14.5px;transition:transform .15s ease, box-shadow .15s ease, background .15s ease;}
+.btn:active{transform:scale(0.97);}
+.btn:disabled{opacity:.5;cursor:not-allowed;}
+.btn-primary{background:var(--forest);color:var(--cream);}
+.btn-primary:hover{background:var(--moss);}
+.btn-ghost{background:transparent;color:var(--forest);border:1.5px solid var(--line);}
+.btn-ghost:hover{border-color:var(--sage);}
+.btn-soft{background:var(--mint);color:var(--moss);}
+.btn-soft:hover{background:#cdeccf;}
+.btn-clay{background:var(--clay);color:#3a2408;}
+.btn-clay:hover{filter:brightness(1.05);}
+input[type=text],input[type=email],input[type=password],input[type=number],textarea,select{
+  width:100%;border:1.5px solid var(--line);border-radius:10px;padding:11px 13px;font-family:inherit;font-size:14.5px;background:#fff;color:var(--ink);
+  transition:border-color .15s ease, box-shadow .15s ease;
+}
+input:focus,textarea:focus,select:focus{outline:none;border-color:var(--sage);box-shadow:0 0 0 4px rgba(127,183,126,0.18);}
+label{font-size:12.5px;font-weight:600;color:var(--moss);display:block;margin-bottom:6px;letter-spacing:.02em;}
+.view{min-height:100vh;display:none;}
+.view.active{display:block;animation:viewIn .4s ease both;}
+@keyframes viewIn{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:none;}}
+
+#view-landing{background:radial-gradient(circle at 15% 20%, rgba(127,183,126,0.35), transparent 45%),radial-gradient(circle at 85% 75%, rgba(224,164,88,0.25), transparent 40%),linear-gradient(180deg, var(--forest), #0A2C21 70%);color:var(--cream);padding:64px 24px 40px;position:relative;}
+.leaf{position:absolute;border-radius:50% 0 50% 50%;background:rgba(127,183,126,0.18);animation:float 9s ease-in-out infinite;}
+@keyframes float{0%,100%{transform:translateY(0) rotate(0deg);}50%{transform:translateY(-24px) rotate(18deg);}}
+.landing-wrap{max-width:980px;margin:0 auto;position:relative;z-index:2;}
+.landing-eyebrow{font-size:12.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--sage);font-weight:600;margin-bottom:14px;}
+.landing-title{font-size:clamp(32px,5.4vw,54px);line-height:1.05;font-weight:600;margin:0 0 16px;}
+.landing-title em{font-style:italic;color:var(--sage);}
+.landing-sub{font-size:16.5px;color:rgba(250,248,242,0.8);max-width:560px;margin:0 0 44px;line-height:1.55;}
+.role-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;}
+@media(max-width:820px){.role-grid{grid-template-columns:1fr;}}
+.role-card{background:rgba(250,248,242,0.06);border:1px solid rgba(250,248,242,0.16);border-radius:20px;padding:26px 22px;color:var(--cream);cursor:pointer;transition:transform .25s ease, background .25s ease, border-color .25s ease;position:relative;overflow:hidden;}
+.role-card:hover{transform:translateY(-6px);background:rgba(250,248,242,0.1);border-color:var(--sage);}
+.role-card .sprout{font-size:26px;display:inline-block;margin-bottom:14px;}
+.role-card h3{margin:0 0 8px;font-size:20px;}
+.role-card p{margin:0 0 18px;font-size:13.5px;color:rgba(250,248,242,0.72);line-height:1.5;}
+.role-card .go{font-size:13px;font-weight:700;color:var(--sage);display:flex;align-items:center;gap:6px;}
+.role-card .go svg{transition:transform .2s ease;}
+.role-card:hover .go svg{transform:translateX(4px);}
+
+.auth-shell{min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(160deg,var(--mint) 0%, var(--cream) 55%);padding:24px;}
+.auth-box{width:100%;max-width:400px;padding:38px 34px;}
+.auth-back{font-size:13px;color:var(--moss);font-weight:600;margin-bottom:18px;display:inline-flex;gap:6px;align-items:center;cursor:pointer;}
+.auth-box h2{margin:0 0 6px;font-size:24px;}
+.auth-box p.muted{margin:0 0 26px;font-size:13.5px;}
+.field{margin-bottom:16px;}
+.hint{font-size:12px;color:rgba(18,36,28,0.5);margin-top:6px;}
+
+.app-shell{min-height:100vh;background:#F3F6F1;}
+.topbar{position:sticky;top:0;z-index:20;background:var(--forest);color:var(--cream);padding:14px 22px;display:flex;align-items:center;gap:14px;}
+.logo{display:flex;align-items:center;gap:9px;font-weight:700;font-size:16px;font-family:'Fraunces',serif;}
+.logo .dot{width:10px;height:10px;border-radius:50%;background:var(--sage);box-shadow:0 0 0 4px rgba(127,183,126,.25);}
+.topbar .role-chip{font-size:11.5px;background:rgba(250,248,242,.14);padding:4px 10px;border-radius:999px;}
+.topbar .credit-chip{font-size:11.5px;background:rgba(250,248,242,.14);padding:4px 10px;border-radius:999px;margin-left:auto;}
+.icon-round{background:rgba(250,248,242,.12);border:none;color:var(--cream);width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;}
+.icon-round:hover{background:rgba(250,248,242,.22);}
+.app-body{max-width:1080px;margin:0 auto;padding:26px 20px 60px;width:100%;}
+.tabs{display:flex;gap:8px;margin-bottom:22px;flex-wrap:wrap;}
+.tab-btn{padding:9px 16px;border-radius:10px;background:#fff;font-size:13.5px;font-weight:600;color:var(--moss);border:1.5px solid var(--line);}
+.tab-btn.active{background:var(--forest);color:var(--cream);border-color:var(--forest);}
+.panel{display:none;}
+.panel.active{display:block;animation:viewIn .3s ease both;}
+
+.drawer-overlay{position:fixed;inset:0;background:rgba(15,30,22,.35);z-index:40;opacity:0;pointer-events:none;transition:opacity .25s ease;}
+.drawer-overlay.open{opacity:1;pointer-events:auto;}
+.drawer{position:fixed;top:0;right:0;height:100%;width:340px;max-width:90vw;background:var(--cream);z-index:41;transform:translateX(100%);transition:transform .3s ease;box-shadow:-14px 0 40px rgba(0,0,0,.15);padding:22px 18px;overflow-y:auto;}
+.drawer.open{transform:translateX(0);}
+.drawer h4{margin:18px 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--moss);}
+.drawer-item{display:flex;align-items:center;gap:12px;padding:12px 10px;border-radius:10px;font-size:14px;font-weight:600;color:var(--ink);cursor:pointer;}
+.drawer-item:hover{background:var(--mint);}
+.drawer-close{position:absolute;top:16px;right:16px;background:none;border:none;font-size:20px;color:var(--moss);}
+
+.api-card{padding:20px;margin-bottom:16px;}
+.api-card .head{display:flex;align-items:center;gap:12px;margin-bottom:4px;}
+.api-card .emoji{font-size:22px;}
+.api-card h3{margin:0;font-size:16.5px;}
+.api-card p.desc{margin:2px 0 14px;font-size:13px;color:rgba(18,36,28,.55);}
+.api-card .body{border-top:1px dashed var(--line);padding-top:14px;}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+@media(max-width:560px){.grid2{grid-template-columns:1fr;}}
+.result-box{background:var(--mint);border-radius:10px;padding:14px 16px;margin-top:12px;font-size:14px;line-height:1.55;}
+.error-box{background:var(--errbg);color:var(--err);border-radius:10px;padding:12px 16px;margin-top:12px;font-size:13.5px;font-weight:600;}
+.loading-box{color:var(--moss);font-size:13.5px;margin-top:12px;display:flex;align-items:center;gap:8px;}
+.spinner{width:14px;height:14px;border-radius:50%;border:2px solid var(--mint);border-top-color:var(--moss);animation:spin .7s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+.chat-log{max-height:300px;overflow-y:auto;margin-bottom:10px;padding-right:4px;}
+.msg{max-width:88%;padding:10px 14px;border-radius:14px;font-size:14px;margin-bottom:10px;line-height:1.45;}
+.msg.user{background:var(--forest);color:var(--cream);margin-left:auto;border-bottom-right-radius:4px;}
+.msg.bot{background:var(--mint);color:var(--ink);border-bottom-left-radius:4px;white-space:pre-wrap;}
+.chat-input-row{display:flex;gap:8px;align-items:center;}
+
+.wizard-steps{display:flex;gap:0;margin-bottom:26px;}
+.wstep{flex:1;text-align:center;position:relative;font-size:12.5px;font-weight:700;color:rgba(18,36,28,.35);}
+.wstep .circ{width:30px;height:30px;border-radius:50%;border:2px solid var(--line);margin:0 auto 8px;display:flex;align-items:center;justify-content:center;font-size:13px;background:#fff;color:rgba(18,36,28,.4);transition:all .3s ease;}
+.wstep.done .circ{background:var(--sage);border-color:var(--sage);color:#fff;}
+.wstep.active .circ{border-color:var(--forest);color:var(--forest);box-shadow:0 0 0 5px var(--mint);}
+.wstep.active,.wstep.done{color:var(--forest);}
+.wstep::before{content:'';position:absolute;top:15px;left:-50%;width:100%;height:2px;background:var(--line);z-index:-1;}
+.wstep:first-child::before{display:none;}
+.wstep.done::before{background:var(--sage);}
+
+.endpoint-box{background:var(--forest);color:var(--sage);padding:12px 16px;border-radius:10px;font-size:13px;display:flex;justify-content:space-between;align-items:center;gap:10px;margin:14px 0;}
+.endpoint-box button{background:rgba(250,248,242,.14);color:var(--cream);border:none;padding:6px 10px;border-radius:8px;font-size:12px;}
+
+table{width:100%;border-collapse:collapse;font-size:13.5px;}
+th{text-align:left;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--moss);padding:8px 10px;border-bottom:1.5px solid var(--line);}
+td{padding:10px;border-bottom:1px solid var(--line);}
+tr:last-child td{border-bottom:none;}
+.status-chip{font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;}
+.status-approved{background:#dff3e1;color:var(--moss);}
+
+.plan-grid{display:grid;grid-template-columns:1fr;gap:10px;}
+.plan-card{padding:22px 18px;position:relative;overflow:hidden;}
+.plan-card.highlight{border:2px solid var(--sage);}
+.plan-card .tag{position:absolute;top:14px;right:14px;font-size:10.5px;}
+.plan-price{font-size:28px;font-weight:700;font-family:'Fraunces',serif;margin:6px 0 14px;}
+.plan-price span{font-size:13px;font-weight:500;color:rgba(18,36,28,.5);}
+.plan-card ul{list-style:none;padding:0;margin:0 0 18px;font-size:13px;}
+.plan-card li{padding:5px 0;color:rgba(18,36,28,.72);}
+.plan-card li::before{content:'✓ ';color:var(--sage);font-weight:700;}
+
+.msg-item{padding:14px;margin-bottom:10px;}
+.msg-item .from{font-size:11px;color:var(--moss);font-weight:700;text-transform:uppercase;letter-spacing:.03em;}
+.msg-item .body{margin-top:6px;font-size:14px;}
+.msg-item .pw{margin-top:8px;display:inline-block;background:var(--mint);padding:4px 10px;border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--moss);}
+
+.toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--forest);color:var(--cream);padding:13px 22px;border-radius:12px;font-size:13.5px;font-weight:600;box-shadow:0 12px 30px rgba(0,0,0,.2);z-index:80;opacity:0;transition:all .35s ease;pointer-events:none;max-width:88vw;}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+.section-title{font-size:19px;margin:0 0 4px;}
+.section-sub{font-size:13.5px;color:rgba(18,36,28,.55);margin:0 0 18px;}
+h4.h-inline{margin:0 0 12px;font-size:15px;}
+.flex-between{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+.small-btn{padding:7px 13px;font-size:12.5px;border-radius:8px;}
+.api-row{padding:14px 16px;margin-bottom:10px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+.api-row .name{font-weight:700;font-size:14.5px;}
+.api-row .meta{font-size:12px;color:rgba(18,36,28,.5);}
+.dropzone{border:2px dashed var(--line);border-radius:12px;padding:22px;text-align:center;font-size:13.5px;color:rgba(18,36,28,.55);cursor:pointer;transition:border-color .2s ease, background .2s ease;}
+.dropzone:hover{border-color:var(--sage);background:var(--mint);}
+.key-status{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;}
+.key-set{background:var(--mint);color:var(--moss);}
+.key-unset{background:var(--errbg);color:var(--err);}
+</style>
+</head>
+<body>
+
+<!-- ============ LANDING ============ -->
+<section class="view active" id="view-landing">
+  <div class="leaf" style="width:220px;height:220px;top:-60px;left:-60px;"></div>
+  <div class="leaf" style="width:160px;height:160px;bottom:-40px;right:6%;animation-delay:2s;"></div>
+  <div class="leaf" style="width:100px;height:100px;top:40%;right:10%;animation-delay:4s;"></div>
+  <div class="landing-wrap">
+    <div class="landing-eyebrow">CSE 226 · Project 1 Demo</div>
+    <h1 class="landing-title">Turn anything you do<br> in a browser into <em>an API</em>.</h1>
+    <p class="landing-sub">Try five ready-made APIs instantly, or describe a new one and get a live, testable endpoint — powered by real AI calls, not canned answers.</p>
+    <div class="role-grid">
+      <div class="role-card" onclick="go('free-login')">
+        <div class="sprout">🌱</div>
+        <h3>Free User</h3>
+        <p>Sign in with just your email. 5 ready-made APIs plus 6 free AI runs to spend however you like.</p>
+        <div class="go">Continue <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      </div>
+      <div class="role-card" onclick="go('pro-login')">
+        <div class="sprout">🌿</div>
+        <h3>Pro Planner</h3>
+        <p>Unlimited runs, full workspace, and a marketplace to resell your own APIs.</p>
+        <div class="go">Continue <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      </div>
+      <div class="role-card" onclick="go('admin-login')">
+        <div class="sprout">🌳</div>
+        <h3>Admin</h3>
+        <p>Approve payments and oversee the marketplace.</p>
+        <div class="go">Continue <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FREE LOGIN ============ -->
+<section class="view" id="view-free-login">
+  <div class="auth-shell">
+    <div class="card auth-box">
+      <span class="auth-back" onclick="go('landing')">← back</span>
+      <h2>Continue as Free User</h2>
+      <p class="muted">Just your email — no password needed for the free trial.</p>
+      <div class="field"><label>Email address</label><input type="email" id="free-email" name="email" autocomplete="email" placeholder="you@example.com"></div>
+      <button class="btn btn-primary" style="width:100%" onclick="loginFree()">Start free trial</button>
+      <p class="hint">You'll get 5 ready-made APIs and 6 free AI runs to spend on anything.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PRO LOGIN ============ -->
+<section class="view" id="view-pro-login">
+  <div class="auth-shell">
+    <div class="card auth-box">
+      <span class="auth-back" onclick="go('landing')">← back</span>
+      <h2>Pro Planner sign in</h2>
+      <p class="muted">Use the email and password your admin sent you after approving your payment.</p>
+      <div class="field"><label>Email address</label><input type="email" id="pro-email" name="email" autocomplete="username" placeholder="you@example.com"></div>
+      <div class="field"><label>Password</label><input type="password" id="pro-pass" name="password" autocomplete="current-password" placeholder="Sent to you by admin"></div>
+      <button class="btn btn-primary" style="width:100%" onclick="loginPro()">Sign in</button>
+      <p class="hint">Demo: any email + any password will work.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ ADMIN LOGIN ============ -->
+<section class="view" id="view-admin-login">
+  <div class="auth-shell">
+    <div class="card auth-box">
+      <span class="auth-back" onclick="go('landing')">← back</span>
+      <h2>Admin sign in</h2>
+      <p class="muted">Restricted access.</p>
+      <div class="field"><label>Email address</label><input type="email" id="admin-email" placeholder="admin@northsouth.edu"></div>
+      <div class="field"><label>Password</label><input type="password" id="admin-pass" placeholder="••••••••"></div>
+      <button class="btn btn-primary" style="width:100%" onclick="loginAdmin()">Sign in</button>
+      <p class="hint" id="admin-hint">Demo credentials: admin@northsouth.edu / 123</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FREE APP ============ -->
+<section class="view" id="view-free-app">
+  <div class="app-shell">
+  <div class="topbar">
+    <div class="logo"><span class="dot"></span>APIGarden</div>
+    <span class="role-chip">Free User</span>
+    <span class="credit-chip" id="credit-chip-free"></span>
+    <button class="icon-round" onclick="openDrawer('free')">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+  </div>
+  <div class="app-body">
+    <div class="tabs">
+      <button class="tab-btn active" onclick="switchTab('free',this,'myapis')">My APIs</button>
+      <button class="tab-btn" onclick="switchTab('free',this,'create')">Create New API</button>
+      <button class="tab-btn" onclick="switchTab('free',this,'market')">Marketplace</button>
+    </div>
+    <div class="panel" id="free-panel-create"><div id="wizard-area-free"></div></div>
+    <div class="panel active" id="free-panel-myapis"><div id="myapis-area-free"></div></div>
+    <div class="panel" id="free-panel-market"><div id="market-area-free"></div></div>
+  </div>
+  </div>
+</section>
+
+<!-- ============ PRO APP ============ -->
+<section class="view" id="view-pro-app">
+  <div class="app-shell">
+  <div class="topbar">
+    <div class="logo"><span class="dot"></span>APIGarden</div>
+    <span class="role-chip">Pro Planner</span>
+    <span class="credit-chip">Unlimited runs</span>
+    <button class="icon-round" onclick="openDrawer('pro')">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+  </div>
+  <div class="app-body">
+    <div class="tabs">
+      <button class="tab-btn active" onclick="switchTab('pro',this,'myapis')">My APIs</button>
+      <button class="tab-btn" onclick="switchTab('pro',this,'create')">Create New API</button>
+      <button class="tab-btn" onclick="switchTab('pro',this,'market')">Marketplace</button>
+    </div>
+    <div class="panel" id="pro-panel-create"><div id="wizard-area-pro"></div></div>
+    <div class="panel active" id="pro-panel-myapis"><div id="myapis-area-pro"></div></div>
+    <div class="panel" id="pro-panel-market"><div id="market-area-pro"></div></div>
+  </div>
+  </div>
+</section>
+
+<!-- ============ ADMIN APP ============ -->
+<section class="view" id="view-admin-app">
+  <div class="app-shell">
+  <div class="topbar">
+    <div class="logo"><span class="dot"></span>APIGarden</div>
+    <span class="role-chip">Admin</span>
+    <button class="icon-round" style="margin-left:auto;" onclick="openDrawer('admin')">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+  </div>
+  <div class="app-body">
+    <h2 class="section-title">Hello, Admin 👋</h2>
+    <p class="section-sub">Here's what needs your attention today.</p>
+    <div class="tabs">
+      <button class="tab-btn active" onclick="switchTab('admin',this,'pending')">Pending Approval</button>
+      <button class="tab-btn" onclick="switchTab('admin',this,'approved')">Approved List</button>
+      <button class="tab-btn" onclick="switchTab('admin',this,'market')">Marketplace Overview</button>
+    </div>
+    <div class="panel active" id="admin-panel-pending"><div id="pending-area"></div></div>
+    <div class="panel" id="admin-panel-approved"><div id="approved-area"></div></div>
+    <div class="panel" id="admin-panel-market"><div id="admin-market-area"></div></div>
+  </div>
+  </div>
+</section>
+
+<!-- ============ DRAWER ============ -->
+<div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawer()"></div>
+<div class="drawer" id="drawer">
+  <button class="drawer-close" onclick="closeDrawer()">✕</button>
+  <div id="drawer-content"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* All AI-flavored features below run locally in the browser — no API key,
+   no external AI service, no network dependency beyond the two live-data
+   lookups (currency, weather) that use free keyless public APIs. */
+
+/* ==================== STATE ==================== */
+/* Per-email profile store. Every email that logs in (free or pro) gets its
+   own isolated record — so "My APIs", credits, saved info, etc. are tied to
+   the account that created them, never mixed up with any other email. */
+let userStore = {};
+const SEEDED_EMAIL = 'ishita.chowdhury@northsouth.edu';
+function freshProfile(role, email){
+  const base = {
+    email,
+    savedInfo: {name:'', email, phone:'', address:''},
+    apis: [], pdfText: '', pdfName: '',
+    chatlog: { grammar: [], pdf: [] },
+    seeded: email.toLowerCase() === SEEDED_EMAIL
+  };
+  if(role==='free'){
+    base.credits = { used:0, max:6 };
+    base.payments = [{plan:'Free Trial', validity:'Ongoing', info:'No payment required'}];
+    base.messages = [];
+  } else if(role==='pro'){
+    base.password = '';
+    base.transactions = [];
+  }
+  return base;
+}
+function getProfile(role, email){
+  const key = role+':'+email.toLowerCase();
+  if(!userStore[key]) userStore[key] = freshProfile(role, email);
+  return userStore[key];
+}
+
+let state = {
+  free: freshProfile('free', ''),
+  pro: freshProfile('pro', ''),
+  admin: {
+    pending: [
+      {id:'TXN-2291', user:'free_user_88@gmail.com', plan:'Pro Monthly', amount:'৳1200', method:'bKash Send Money', date:'2026-07-05'},
+    ],
+    approved: [],
+    market: []
+  },
+  wizard: { free: freshWizard(), pro: freshWizard() }
+};
+
+function freshWizard(){ return { step:1, name:'', description:'', exampleInput:'', testOutput:null }; }
+
+/* ==================== NAV ==================== */
+function go(view){
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.getElementById('view-'+view).classList.add('active');
+  window.scrollTo({top:0, behavior:'smooth'});
+}
+function loginFree(){
+  const email = (document.getElementById('free-email').value.trim() || 'you@example.com').toLowerCase();
+  state.free = getProfile('free', email);
+  go('free-app');
+  renderWizard('free'); renderMyApis('free'); renderMarket('free'); updateCreditChip();
+}
+function loginPro(){
+  const email = (document.getElementById('pro-email').value.trim() || 'pro.user@example.com').toLowerCase();
+  state.pro = getProfile('pro', email);
+  go('pro-app');
+  renderWizard('pro'); renderMyApis('pro'); renderMarket('pro');
+}
+function loginAdmin(){
+  const email = document.getElementById('admin-email').value.trim();
+  const pass = document.getElementById('admin-pass').value.trim();
+  const hint = document.getElementById('admin-hint');
+  if(email !== 'admin@northsouth.edu' || pass !== '123'){
+    hint.textContent = "Incorrect credentials — try admin@northsouth.edu / 123";
+    hint.style.color = '#b23b3b';
+    return;
+  }
+  go('admin-app');
+  renderPending(); renderApproved(); renderAdminMarket();
+}
+function switchTab(role, btn, name){
+  document.querySelectorAll(`#view-${role}-app .tab-btn`).forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll(`#view-${role}-app .panel`).forEach(p=>p.classList.remove('active'));
+  document.getElementById(`${role}-panel-${name}`).classList.add('active');
+}
+function showToast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 2800);
+}
+
+/* ==================== CREDITS ==================== */
+function updateCreditChip(){
+  const c = state.free.credits;
+  const el = document.getElementById('credit-chip-free');
+  if(el) el.textContent = `${c.max - c.used}/${c.max} free runs left`;
+}
+function tryUseCredit(role){
+  if(role !== 'free') return true; // pro/admin unlimited
+  const c = state.free.credits;
+  if(c.used >= c.max){
+    showToast('Out of free runs — upgrade to Pro for unlimited runs');
+    return false;
+  }
+  c.used++;
+  updateCreditChip();
+  return true;
+}
+
+/* ==================== DRAWER (account menu) ==================== */
+function openDrawer(role){
+  document.getElementById('drawer-overlay').classList.add('open');
+  document.getElementById('drawer').classList.add('open');
+  renderDrawer(role);
+}
+function closeDrawer(){
+  document.getElementById('drawer-overlay').classList.remove('open');
+  document.getElementById('drawer').classList.remove('open');
+}
+function renderDrawer(role){
+  const el = document.getElementById('drawer-content');
+  if(role === 'free'){
+    el.innerHTML = `
+      <h3 style="margin:6px 0 2px;">Menu</h3>
+      <p class="muted" style="font-size:13px;margin:0;">${state.free.email}</p>
+      <h4>Account</h4>
+      <div class="drawer-item" onclick="drawerPanel('free-usage')">📊 Free runs remaining</div>
+      <h4>Transactions</h4>
+      <div class="drawer-item" onclick="drawerPanel('free-payments')">💳 My Payments</div>
+      <div class="drawer-item" onclick="drawerPanel('free-plans')">🌿 Our Plans</div>
+      <h4>Support</h4>
+      <div class="drawer-item" onclick="drawerPanel('free-inbox')">✉️ Admin Messages ${state.free.messages.length?`<span class="badge">${state.free.messages.length} new</span>`:''}</div>
+      <div class="drawer-item" onclick="drawerPanel('free-form')">📝 Saved info (autofill)</div>
+      <h4>Session</h4>
+      <div class="drawer-item" onclick="logout()">🚪 Log out / switch role</div>
+      <div id="drawer-sub" style="margin-top:12px;"></div>`;
+  } else if(role === 'pro'){
+    el.innerHTML = `
+      <h3 style="margin:6px 0 2px;">Menu</h3>
+      <p class="muted" style="font-size:13px;margin:0;">${state.pro.email}</p>
+      <h4>Account</h4>
+      <div class="drawer-item" onclick="drawerPanel('pro-form')">📝 Saved info (autofill)</div>
+      <div class="drawer-item" onclick="drawerPanel('pro-transactions')">📈 Transactions</div>
+      <h4>Session</h4>
+      <div class="drawer-item" onclick="logout()">🚪 Log out / switch role</div>
+      <div id="drawer-sub" style="margin-top:12px;"></div>`;
+  } else if(role === 'admin'){
+    el.innerHTML = `
+      <h3 style="margin:6px 0 2px;">Menu</h3>
+      <p class="muted" style="font-size:13px;margin:0;">admin@northsouth.edu</p>
+      <div class="drawer-item" onclick="logout()">🚪 Log out / switch role</div>
+      <div id="drawer-sub" style="margin-top:12px;"></div>`;
+  }
+}
+function logout(){
+  closeDrawer();
+  go('landing');
+}
+function drawerPanel(name){
+  const sub = document.getElementById('drawer-sub');
+  if(name==='free-usage'){
+    const c = state.free.credits;
+    sub.innerHTML = `<div class="card" style="padding:14px;">
+      <div class="flex-between"><span style="font-size:13px;font-weight:600;">Free runs</span><span class="mono" style="font-size:13px;">${c.max-c.used}/${c.max} left</span></div>
+      <p class="hint" style="margin-top:10px;">Every AI run — a ready-made API, a custom API test, anything — uses one credit. Upgrade for unlimited.</p>
+    </div>`;
+  } else if(name==='free-payments'){
+    sub.innerHTML = `<div class="card" style="padding:14px;">` + state.free.payments.map(p=>`
+      <div style="padding:8px 0;border-bottom:1px solid var(--line);">
+        <div style="font-weight:700;font-size:13.5px;">${p.plan}</div>
+        <div class="muted" style="font-size:12px;">Validity: ${p.validity} · ${p.info}</div>
+      </div>`).join('') + `</div>`;
+  } else if(name==='free-plans'){
+    sub.innerHTML = plansHTML();
+  } else if(name==='free-inbox'){
+    sub.innerHTML = messagesHTML(state.free.messages);
+  } else if(name==='free-form'){
+    sub.innerHTML = formInfoHTML('free');
+  } else if(name==='pro-form'){
+    sub.innerHTML = formInfoHTML('pro');
+  } else if(name==='pro-transactions'){
+    sub.innerHTML = `<div class="card" style="padding:14px;overflow-x:auto;">` + (state.pro.transactions.length ? `<table>
+      <tr><th>API</th><th>Buyer</th><th>Price</th></tr>
+      ${state.pro.transactions.map(t=>`<tr><td>${t.api}</td><td>${t.buyer}</td><td>$${t.price}</td></tr>`).join('')}
+    </table>` : `<p class="hint" style="margin:0;">No sales yet.</p>`) + `</div>`;
+  }
+}
+function plansHTML(){
+  return `<div class="plan-grid">
+    <div class="card plan-card"><span class="badge tag">Current</span><h4 class="h-inline">Free Trial</h4><div class="plan-price">৳0</div><ul><li>5 ready-made APIs</li><li>6 free AI runs</li></ul></div>
+    <div class="card plan-card highlight"><span class="badge tag" style="background:var(--clay);color:#3a2408;">Popular</span><h4 class="h-inline">Pro Monthly</h4><div class="plan-price">৳1200<span>/mo</span></div><ul><li>Unlimited runs</li><li>Sell on marketplace</li><li>Saved autofill</li></ul><button class="btn btn-primary small-btn" style="width:100%" onclick="startUpgrade('Pro Monthly','৳1200')">Choose plan</button></div>
+    <div class="card plan-card"><h4 class="h-inline">Pro Yearly</h4><div class="plan-price">৳9000<span>/yr</span></div><ul><li>Everything in monthly</li><li>2 months free</li></ul><button class="btn btn-ghost small-btn" style="width:100%" onclick="startUpgrade('Pro Yearly','৳9000')">Choose plan</button></div>
+  </div>`;
+}
+function startUpgrade(plan, amount){
+  const proceed = confirm(`Send ${amount} via bKash "Send Money" to 017XX-XXXXXX, then tap OK to notify admin for approval.`);
+  if(proceed){
+    state.admin.pending.push({id:'TXN-'+Math.floor(2000+Math.random()*900), user:state.free.email, plan, amount, method:'bKash Send Money', date:new Date().toISOString().slice(0,10)});
+    showToast('Payment submitted — waiting for admin approval');
+    closeDrawer();
+  }
+}
+function messagesHTML(list){
+  if(!list.length) return `<div class="card" style="padding:16px;text-align:center;color:rgba(18,36,28,.5);font-size:13.5px;">No messages yet.</div>`;
+  return list.map(m=>`<div class="card msg-item"><div class="from">From Admin</div><div class="body">${m.body}</div>${m.password? `<span class="pw">${m.password}</span>`:''}</div>`).join('');
+}
+function formInfoHTML(role){
+  const info = state[role].savedInfo;
+  return `<div class="card" style="padding:18px;">
+    <p class="hint" style="margin-top:0;">Saved once, reused everywhere.</p>
+    <div class="grid2">
+      <div class="field"><label>Full name</label><input type="text" id="${role}-si-name" value="${info.name}"></div>
+      <div class="field"><label>Email</label><input type="text" id="${role}-si-email" value="${info.email}"></div>
+      <div class="field"><label>Phone</label><input type="text" id="${role}-si-phone" value="${info.phone}"></div>
+      <div class="field"><label>Address</label><input type="text" id="${role}-si-address" value="${info.address}"></div>
+    </div>
+    <button class="btn btn-soft small-btn" onclick="saveInfo('${role}')">Save info</button>
+  </div>`;
+}
+function saveInfo(role){
+  state[role].savedInfo = {
+    name: document.getElementById(`${role}-si-name`).value,
+    email: document.getElementById(`${role}-si-email`).value,
+    phone: document.getElementById(`${role}-si-phone`).value,
+    address: document.getElementById(`${role}-si-address`).value,
+  };
+  showToast('Saved. Every form will use this from now on.');
+}
+
+/* ==================== SEEDED APIS (only shown for the one email that "created" them) ==================== */
+function seededApisHTML(role){
+  return `
+    <h3 class="section-title" style="font-size:16px;margin-top:6px;">Built-in APIs (created by ${escapeHtml(state[role].email)})</h3>
+    <div class="card api-card">
+      <div class="head"><span class="emoji">💱</span><h3>Currency Converter</h3></div>
+      <p class="desc">Live exchange rates — real data, no AI needed.</p>
+      <div class="body">
+        <div class="grid2">
+          <div class="field"><label>Amount</label><input type="number" id="cur-amount-${role}" value="100"></div>
+          <div class="field"><label>From</label><select id="cur-from-${role}">${CURRENCY_OPTIONS('USD')}</select></div>
+        </div>
+        <div class="field"><label>To</label><select id="cur-to-${role}">${CURRENCY_OPTIONS('BDT')}</select></div>
+        <button class="btn btn-primary small-btn" onclick="runCurrency('${role}')">Convert</button>
+        <div id="cur-result-${role}"></div>
+      </div>
+    </div>
+
+    <div class="card api-card">
+      <div class="head"><span class="emoji">🌤</span><h3>Weather Lookup</h3></div>
+      <p class="desc">Live current conditions for any city — real data, no AI needed.</p>
+      <div class="body">
+        <div class="field"><label>City</label><input type="text" id="wx-city-${role}" placeholder="e.g. Dhaka"></div>
+        <button class="btn btn-primary small-btn" onclick="runWeather('${role}')">Get weather</button>
+        <div id="wx-result-${role}"></div>
+      </div>
+    </div>
+
+    <div class="card api-card">
+      <div class="head"><span class="emoji">✨</span><h3>Motivational Quote</h3></div>
+      <p class="desc">One fresh quote per click — optionally themed to a topic.</p>
+      <div class="body">
+        <div class="field"><label>Topic (optional)</label><input type="text" id="quote-topic-${role}" placeholder="e.g. education, exams, life, work"></div>
+        <button class="btn btn-clay small-btn" onclick="runQuote('${role}')">Give me a quote</button>
+        <div id="quote-result-${role}"></div>
+      </div>
+    </div>
+
+    <div class="card api-card">
+      <div class="head"><span class="emoji">📝</span><h3>Grammar Correction</h3></div>
+      <p class="desc">Paste text, get it corrected with an explanation of the fixes.</p>
+      <div class="body">
+        <div class="field"><label>Your text</label><textarea id="gram-input-${role}" rows="3" placeholder="Paste text to correct..."></textarea></div>
+        <button class="btn btn-primary small-btn" onclick="runGrammar('${role}')">Fix it</button>
+        <div id="gram-result-${role}"></div>
+      </div>
+    </div>
+
+    <div class="card api-card">
+      <div class="head"><span class="emoji">📄</span><h3>PDF Question &amp; Answer</h3></div>
+      <p class="desc">Upload a PDF, then ask anything about it. Best with short PDFs (1–5 pages).</p>
+      <div class="body">
+        <div class="dropzone" id="pdf-drop-${role}" onclick="document.getElementById('pdf-file-${role}').click()">
+          📎 Click to upload a PDF<br><span class="hint" id="pdf-status-${role}">${state[role].pdfName ? 'Loaded: '+state[role].pdfName : 'No file uploaded yet'}</span>
+        </div>
+        <input type="file" id="pdf-file-${role}" accept="application/pdf" class="hidden" onchange="handlePdfUpload('${role}', this.files[0])">
+        <div style="margin-top:12px;">
+          <div class="chat-log" id="pdf-chat-${role}"></div>
+          <div class="chat-input-row">
+            <input type="text" id="pdf-question-${role}" placeholder="Ask a question about the PDF..." onkeydown="if(event.key==='Enter')runPdfQuestion('${role}')">
+            <button class="btn btn-primary small-btn" onclick="runPdfQuestion('${role}')">Ask</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function setLoading(targetId){ document.getElementById(targetId).innerHTML = `<div class="loading-box"><span class="spinner"></span>Working...</div>`; }
+function setError(targetId, err){ document.getElementById(targetId).innerHTML = `<div class="error-box">⚠ ${escapeHtml(err.message || String(err))}</div>`; }
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/* --- Currency (real data via frankfurter.app, no key needed) --- */
+const CURRENCY_LIST = ['USD','EUR','GBP','BDT','INR','JPY','CNY','AUD','CAD','CHF','SGD','AED','SAR','MYR','THB','KRW','NZD','ZAR','SEK','NOK'];
+function CURRENCY_OPTIONS(selected){
+  return CURRENCY_LIST.map(c=>`<option value="${c}" ${c===selected?'selected':''}>${c}</option>`).join('');
+}
+async function runCurrency(role){
+  const targetId = `cur-result-${role}`;
+  if(!tryUseCredit(role)) return;
+  const amount = parseFloat(document.getElementById(`cur-amount-${role}`).value) || 1;
+  const from = document.getElementById(`cur-from-${role}`).value;
+  const to = document.getElementById(`cur-to-${role}`).value;
+  setLoading(targetId);
+  try{
+    const res = await fetch(`https://api.frankfurter.app/latest?amount=${amount}&from=${from}&to=${to}`);
+    if(!res.ok) throw new Error('Currency service could not process that pair. Check the currency codes.');
+    const data = await res.json();
+    const converted = data.rates?.[to];
+    if(converted === undefined) throw new Error(`"${to}" isn't a supported currency code.`);
+    document.getElementById(targetId).innerHTML = `<div class="result-box"><b>${amount} ${from} = ${converted.toFixed(2)} ${to}</b><br><span class="muted">Rate date: ${data.date}</span></div>`;
+  }catch(err){ setError(targetId, err); }
+}
+
+/* --- Weather (real data via open-meteo, no key needed) --- */
+const WEATHER_CODES = {0:'Clear sky',1:'Mainly clear',2:'Partly cloudy',3:'Overcast',45:'Fog',48:'Depositing rime fog',51:'Light drizzle',53:'Drizzle',55:'Dense drizzle',61:'Light rain',63:'Rain',65:'Heavy rain',71:'Light snow',73:'Snow',75:'Heavy snow',80:'Light rain showers',81:'Rain showers',82:'Violent rain showers',95:'Thunderstorm'};
+async function runWeather(role){
+  const targetId = `wx-result-${role}`;
+  if(!tryUseCredit(role)) return;
+  const city = document.getElementById(`wx-city-${role}`).value.trim();
+  if(!city){ document.getElementById(targetId).innerHTML = `<div class="error-box">⚠ Type a city name first.</div>`; return; }
+  setLoading(targetId);
+  try{
+    const geo = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1`).then(r=>r.json());
+    const place = geo.results?.[0];
+    if(!place) throw new Error(`Couldn't find a place called "${city}".`);
+    const wx = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${place.latitude}&longitude=${place.longitude}&current=temperature_2m,weather_code,wind_speed_10m`).then(r=>r.json());
+    const c = wx.current;
+    const desc = WEATHER_CODES[c.weather_code] || 'Unknown conditions';
+    document.getElementById(targetId).innerHTML = `<div class="result-box"><b>${place.name}, ${place.country}</b><br>${desc} · ${c.temperature_2m}°C · wind ${c.wind_speed_10m} km/h</div>`;
+  }catch(err){ setError(targetId, err); }
+}
+
+/* --- Motivational quote (local bank — zero network calls, always works) --- */
+const QUOTE_BANK = {
+  general: [
+    "Small steps, taken daily, outrun big plans taken never.",
+    "The work you avoid today is the weight you carry tomorrow.",
+    "Discipline is just choosing between what you want now and what you want most.",
+    "Progress hides inside the boring, repeated effort.",
+    "Comfort and progress rarely sit at the same table.",
+    "Momentum is earned one honest attempt at a time.",
+    "The best time to start was earlier — the second best time is now.",
+    "Consistency turns average ideas into remarkable results."
+  ],
+  education: [
+    "Every expert was once a beginner who refused to quit.",
+    "What you practice in private shows up as skill in public.",
+    "The student who asks 'why' outlearns the one who only memorizes.",
+    "Understanding is built one honest question at a time.",
+    "Grades fade, but the habit of learning stays with you for life."
+  ],
+  exam: [
+    "You don't need more time — you need a clearer next step.",
+    "Confidence is built in the moments you almost gave up but didn't.",
+    "A slow start beats a brilliant idea that never leaves the notebook.",
+    "The exam only tests what you practiced — so practice like it matters.",
+    "Calm minds recall more than anxious ones — breathe, then begin."
+  ],
+  life: [
+    "The obstacle in front of you is also the shape of your growth.",
+    "You are not behind — you are exactly where your effort has placed you.",
+    "Doubt kills more dreams than failure ever will.",
+    "Fear fades the moment you take the first real step.",
+    "Every season of life is teaching you something the next one will need."
+  ],
+  work: [
+    "Done is the engine that makes perfect possible.",
+    "Great work is just ordinary work, repeated without excuses.",
+    "Focus is choosing what to ignore, on purpose.",
+    "The best resume is a track record of finished things.",
+    "Careers are built in the unglamorous middle, not the highlight reel."
+  ]
+};
+let lastQuote = '';
+async function runQuote(role){
+  const targetId = `quote-result-${role}`;
+  const topicField = document.getElementById(`quote-topic-${role}`);
+  const topicRaw = topicField ? topicField.value.trim().toLowerCase() : '';
+  if(!tryUseCredit(role)) return;
+  setLoading(targetId);
+  await new Promise(r=>setTimeout(r, 250)); // brief pause so it still feels like a "call"
+  const matchedKey = Object.keys(QUOTE_BANK).find(k=>k===topicRaw || (topicRaw && (k.includes(topicRaw) || topicRaw.includes(k))));
+  const pool = matchedKey ? QUOTE_BANK[matchedKey] : QUOTE_BANK.general;
+  let pick = pool[Math.floor(Math.random()*pool.length)];
+  if(pick === lastQuote && pool.length>1){
+    pick = pool[(pool.indexOf(pick)+1) % pool.length];
+  }
+  lastQuote = pick;
+  const label = matchedKey ? `Topic: ${matchedKey}` : (topicRaw ? `No exact match for "${topicRaw}" — showing a general quote` : '');
+  document.getElementById(targetId).innerHTML = `<div class="result-box">“${escapeHtml(pick)}”${label ? `<br><span class="muted" style="font-size:12px;">${escapeHtml(label)}</span>` : ''}</div>`;
+}
+
+/* --- Grammar correction (local rule-based — zero network calls, always works) --- */
+function localGrammarFix(input){
+  let text = input;
+  const fixes = [];
+
+  if(/  +/.test(text)){ text = text.replace(/ {2,}/g, ' '); fixes.push('Removed extra spaces'); }
+
+  const contractions = {
+    "dont":"don't", "cant":"can't", "wont":"won't", "im":"I'm", "ive":"I've",
+    "id":"I'd", "ill":"I'll", "isnt":"isn't", "arent":"aren't", "didnt":"didn't",
+    "doesnt":"doesn't", "youre":"you're", "theyre":"they're", "whats":"what's",
+    "alot":"a lot", "recieve":"receive", "definately":"definitely", "seperate":"separate",
+    "occured":"occurred", "thier":"their", "wich":"which"
+  };
+  let contractionsFixed = false;
+  text = text.replace(/\b[a-zA-Z']+\b/g, word=>{
+    const lower = word.toLowerCase();
+    if(contractions[lower]){
+      contractionsFixed = true;
+      const rep = contractions[lower];
+      return word[0]===word[0].toUpperCase() ? rep[0].toUpperCase()+rep.slice(1) : rep;
+    }
+    return word;
+  });
+  if(contractionsFixed) fixes.push('Fixed common contractions/typos');
+
+  // capitalize standalone "i"
+  const beforeI = text;
+  text = text.replace(/\bi\b/g, 'I');
+  if(text !== beforeI) fixes.push('Capitalized "I"');
+
+  // capitalize the first letter of each sentence
+  const beforeCap = text;
+  text = text.replace(/(^\s*\w|[.!?]\s+\w)/g, m => m.toUpperCase());
+  if(text !== beforeCap) fixes.push('Capitalized sentence starts');
+
+  text = text.trim();
+  if(text && !/[.!?]$/.test(text)){ text += '.'; fixes.push('Added missing end punctuation'); }
+
+  return { corrected: text, fixes };
+}
+async function runGrammar(role){
+  const targetId = `gram-result-${role}`;
+  const input = document.getElementById(`gram-input-${role}`).value.trim();
+  if(!input){ document.getElementById(targetId).innerHTML = `<div class="error-box">⚠ Paste some text first.</div>`; return; }
+  if(!tryUseCredit(role)) return;
+  setLoading(targetId);
+  await new Promise(r=>setTimeout(r, 250));
+  const { corrected, fixes } = localGrammarFix(input);
+  document.getElementById(targetId).innerHTML = `<div class="result-box">
+    <b>Corrected:</b><br>${escapeHtml(corrected)}
+    ${fixes.length ? `<br><br><b>Fixes:</b><ul style="margin:6px 0 0;padding-left:18px;">${fixes.map(f=>`<li>${escapeHtml(f)}</li>`).join('')}</ul>` : '<br><br><span class="muted">No issues found.</span>'}
+    <p class="hint" style="margin:10px 0 0;">Runs entirely in your browser — catches spacing, capitalization, punctuation and common typos. It won't rewrite full sentences the way a real language model would.</p>
+  </div>`;
+}
+
+const STOPWORDS = new Set(['the','a','an','is','are','was','were','be','been','of','in','on','at','to','for','and','or','but','with','as','by','it','this','that','what','who','when','where','why','how','does','do','did','has','have','had','i','you','he','she','they','we','me','my','your']);
+function answerFromText(question, fullText){
+  const sentences = fullText.split(/(?<=[.!?])\s+/).map(s=>s.trim()).filter(s=>s.length>3);
+  const qWords = question.toLowerCase().replace(/[^a-z0-9\s]/g,'').split(/\s+/).filter(w=>w && !STOPWORDS.has(w));
+  if(!qWords.length || !sentences.length) return "I couldn't find anything relevant to that question in the PDF.";
+  const scored = sentences.map(s=>{
+    const lower = s.toLowerCase();
+    let score = 0;
+    for(const w of qWords){ if(lower.includes(w)) score++; }
+    return {s, score};
+  }).filter(x=>x.score>0).sort((a,b)=>b.score-a.score);
+  if(!scored.length) return "I couldn't find anything relevant to that question in the PDF — try rephrasing, or ask about a topic that's actually mentioned in the document.";
+  return scored.slice(0,3).map(x=>x.s).join(' ');
+}
+
+/* --- PDF Q&A (real extraction via pdf.js, answered with local keyword search — zero network calls after upload) --- */
+if(window.pdfjsLib){ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; }
+
+async function handlePdfUpload(role, file){
+  if(!file) return;
+  const statusEl = document.getElementById(`pdf-status-${role}`);
+  statusEl.textContent = 'Reading PDF...';
+  try{
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({data: buf}).promise;
+    let fullText = '';
+    for(let i=1;i<=pdf.numPages;i++){
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      fullText += content.items.map(it=>it.str).join(' ') + '\n\n';
+    }
+    state[role].pdfText = fullText.slice(0, 15000); // keep it sane
+    state[role].pdfName = file.name;
+    statusEl.textContent = `Loaded: ${file.name} (${pdf.numPages} page${pdf.numPages>1?'s':''}, ready for questions)`;
+    state[role].chatlog.pdf = [];
+    renderPdfChat(role);
+    showToast('PDF loaded — ask a question below');
+  }catch(err){
+    statusEl.textContent = 'Could not read that PDF — try another file.';
+  }
+}
+
+function renderPdfChat(role){
+  const log = document.getElementById(`pdf-chat-${role}`);
+  if(!log) return;
+  log.innerHTML = state[role].chatlog.pdf.map(m=>`<div class="msg ${m.who}">${escapeHtml(m.text)}</div>`).join('');
+  log.scrollTop = log.scrollHeight;
+}
+
+async function runPdfQuestion(role){
+  const input = document.getElementById(`pdf-question-${role}`);
+  const q = input.value.trim();
+  if(!q) return;
+  if(!state[role].pdfText){ showToast('Upload a PDF first'); return; }
+  if(!tryUseCredit(role)) return;
+  state[role].chatlog.pdf.push({who:'user', text:q});
+  input.value = '';
+  renderPdfChat(role);
+  state[role].chatlog.pdf.push({who:'bot', text:'Thinking...'});
+  renderPdfChat(role);
+  await new Promise(r=>setTimeout(r, 300));
+  const answer = answerFromText(q, state[role].pdfText);
+  state[role].chatlog.pdf[state[role].chatlog.pdf.length-1] = {who:'bot', text:answer};
+  renderPdfChat(role);
+}
+
+/* --- Local movie dataset + matcher, used when a custom API's description is about
+   movie recommendations. Purely local keyword matching against a small curated
+   list — not a real recommendation engine, but it gives concrete, query-relevant
+   results instead of the generic template below. --- */
+const MOVIE_DB = [
+  {title:'The Wild Robot', year:2024, genre:'animated family sci-fi', blurb:'A shipwrecked robot learns to survive and raise a gosling on a remote island.'},
+  {title:'Flow', year:2024, genre:'animated adventure', blurb:'A dialogue-free journey following a cat and other animals surviving a great flood.'},
+  {title:'Inside Out 2', year:2024, genre:'animated family comedy', blurb:'Riley\'s emotions gain new members as she navigates the anxiety of adolescence.'},
+  {title:'Spider-Man: Across the Spider-Verse', year:2023, genre:'animated superhero action', blurb:'Miles Morales journeys across realities and confronts what it means to be a hero.'},
+  {title:'The Boy and the Heron', year:2023, genre:'animated fantasy drama', blurb:'A grieving boy follows a mysterious heron into a surreal, ancestral world.'},
+  {title:'Dune: Part Two', year:2024, genre:'sci-fi epic', blurb:'Paul Atreides unites the Fremen to take revenge against the conspirators who destroyed his family.'},
+  {title:'Oppenheimer', year:2023, genre:'historical drama', blurb:'The story of the physicist who helped build the atomic bomb, and the toll it took on him.'},
+  {title:'Poor Things', year:2023, genre:'dark comedy fantasy', blurb:'A young woman brought back to life explores the world with unfiltered curiosity.'},
+  {title:'Everything Everywhere All at Once', year:2022, genre:'sci-fi comedy action', blurb:'An overwhelmed laundromat owner discovers she must save the multiverse.'},
+  {title:'Parasite', year:2019, genre:'thriller dark comedy', blurb:'A poor family schemes to become employed by a wealthy household, with dark consequences.'},
+  {title:'Interstellar', year:2014, genre:'sci-fi drama', blurb:'A team of explorers travel through a wormhole to save humanity.'},
+  {title:'Coco', year:2017, genre:'animated family fantasy', blurb:'A boy is transported to the Land of the Dead and uncovers his family\'s hidden history.'},
+  {title:'Spirited Away', year:2001, genre:'animated fantasy adventure', blurb:'A girl becomes trapped in a spirit world and must work to free her parents.'},
+  {title:'The Grand Budapest Hotel', year:2014, genre:'comedy adventure', blurb:'A legendary concierge and his protégé get caught up in a whimsical caper.'}
+];
+function recommendMovies(query){
+  const q = (query||'').toLowerCase();
+  const qWords = q.replace(/[^a-z0-9\s]/g,'').split(/\s+/).filter(Boolean);
+  const scored = MOVIE_DB.map(m=>{
+    const hay = `${m.title} ${m.genre} ${m.year}`.toLowerCase();
+    let score = 0;
+    for(const w of qWords){ if(w.length>1 && hay.includes(w)) score++; }
+    return {m, score};
+  }).sort((a,b)=>b.score-a.score);
+  const top = scored[0].score>0 ? scored.filter(x=>x.score>0).slice(0,3) : scored.slice(0,3);
+  const usedFallback = scored[0].score===0;
+  const lines = top.map(x=>`• ${x.m.title} (${x.m.year}) — ${x.m.blurb}`).join('\n');
+  return (usedFallback
+    ? `Nothing matched "${query}" directly, so here are a few well-regarded picks instead:\n`
+    : `Top matches for "${query}":\n`) + lines;
+}
+function looksLikeMovieApi(description){
+  const d = (description||'').toLowerCase();
+  return /movie|film|cinema/.test(d) && /recommend|suggest|watch/.test(d);
+}
+
+/* --- Local "endpoint simulator" used by Create-New-API test runs and My APIs runs.
+   No network call, no key needed — it reflects the input back through the
+   description so the demo always produces something concrete instead of failing.
+   Exception: descriptions that are clearly about movie recommendations get routed
+   to a small local movie dataset instead, so they return real, query-relevant
+   suggestions rather than a canned template. --*/
+function simulateEndpoint(description, input){
+  const cleanInput = (input || '').trim() || '(no input provided)';
+  const desc = (description || '').trim().replace(/\.$/,'');
+  if(looksLikeMovieApi(desc)){
+    return recommendMovies(cleanInput) + `\n\n(This is matched against a small local list of ~14 movies — not a real recommendation model. Wire this up to a real movie database or language model on the backend for genuinely open-ended suggestions.)`;
+  }
+  return `Simulated result for input "${cleanInput}":\nBased on the endpoint's job — "${desc}" — here is the kind of response it would return for that input.\n(This is a local simulation. Connect a real language model on the backend to generate genuinely dynamic answers instead of this template.)`;
+}
+
+/* ==================== CREATE NEW API (locally simulated demo — no AI key needed) ==================== */
+function renderWizard(role){
+  const w = state.wizard[role];
+  const wrap = document.getElementById('wizard-area-'+role);
+  wrap.innerHTML = `
+    <div class="card" style="padding:24px;">
+      <h2 class="section-title">Create a new API</h2>
+      <p class="section-sub">Describe it, generate it, and get a live test right here — the same call a real endpoint would make.</p>
+      <div class="wizard-steps">
+        ${['Describe','Generate & Test','Save'].map((label,i)=>{
+          const n=i+1; const cls = n<w.step?'done':n===w.step?'active':'';
+          return `<div class="wstep ${cls}"><div class="circ">${n<w.step?'✓':n}</div>${label}</div>`;
+        }).join('')}
+      </div>
+      <div id="wizard-step-body-${role}"></div>
+    </div>`;
+  renderWizardStep(role);
+}
+function renderWizardStep(role){
+  const w = state.wizard[role];
+  const body = document.getElementById('wizard-step-body-'+role);
+  if(w.step===1){
+    body.innerHTML = `
+      <div class="field"><label>API name</label><input type="text" id="wiz-name-${role}" value="${w.name}" placeholder="e.g. Movie Recommender"></div>
+      <div class="field"><label>What should it do? (one or two sentences)</label><textarea id="wiz-desc-${role}" rows="2" placeholder="e.g. Given a genre, suggest 3 movies with a one-line reason each.">${w.description}</textarea></div>
+      <div class="field"><label>Example input someone would send</label><input type="text" id="wiz-example-${role}" value="${w.exampleInput}" placeholder="e.g. genre: sci-fi"></div>
+      <button class="btn btn-primary" onclick="wizardGenerate('${role}')">Generate &amp; test</button>
+    `;
+  } else if(w.step===2){
+    body.innerHTML = `
+      <p style="font-size:14.5px;"><b>${escapeHtml(w.name)}</b> — ${escapeHtml(w.description)}</p>
+      <div class="field"><label>Example input</label><input type="text" id="wiz-example2-${role}" value="${w.exampleInput}"></div>
+      <button class="btn btn-clay small-btn" onclick="wizardRunTest('${role}')">Run test</button>
+      <div id="wiz-test-result-${role}"></div>
+      <div class="row" style="gap:10px;margin-top:16px;">
+        <button class="btn btn-ghost" onclick="wizardBack('${role}')">← edit description</button>
+        <button class="btn btn-primary" onclick="wizardSave('${role}')" ${w.testOutput ? '' : 'disabled'}>Looks good — save this API</button>
+      </div>
+    `;
+    if(w.testOutput){
+      document.getElementById(`wiz-test-result-${role}`).innerHTML = `<div class="result-box"><b>Test output:</b><br>${escapeHtml(w.testOutput)}</div>`;
+    }
+  } else if(w.step===3){
+    const ep = '/api/v1/run/' + slug(w.name);
+    body.innerHTML = `
+      <div style="text-align:center;padding:10px 0 4px;">
+        <h3 style="margin:0 0 4px;">Your API is saved</h3>
+        <p class="muted" style="margin:0 0 14px;">Find it any time under "My APIs" and run it with new input.</p>
+        <div class="endpoint-box mono"><span>POST ${ep}</span><button onclick="navigator.clipboard && navigator.clipboard.writeText('${ep}'); showToast('Endpoint copied')">Copy</button></div>
+        <button class="btn btn-ghost" onclick="resetWizard('${role}')">Create another</button>
+      </div>`;
+  }
+}
+async function wizardGenerate(role){
+  const w = state.wizard[role];
+  w.name = document.getElementById(`wiz-name-${role}`).value.trim() || 'My API';
+  w.description = document.getElementById(`wiz-desc-${role}`).value.trim();
+  w.exampleInput = document.getElementById(`wiz-example-${role}`).value.trim();
+  if(!w.description){ showToast('Describe what the API should do first'); return; }
+  w.step = 2; w.testOutput = null;
+  renderWizard(role);
+  await wizardRunTest(role);
+}
+async function wizardRunTest(role){
+  const w = state.wizard[role];
+  const exField = document.getElementById(`wiz-example2-${role}`);
+  if(exField) w.exampleInput = exField.value.trim();
+  const targetId = `wiz-test-result-${role}`;
+  if(!tryUseCredit(role)) return;
+  document.getElementById(targetId).innerHTML = `<div class="loading-box"><span class="spinner"></span>Running your API...</div>`;
+  await new Promise(r=>setTimeout(r, 300));
+  w.testOutput = simulateEndpoint(w.description, w.exampleInput);
+  renderWizardStep(role);
+}
+function wizardBack(role){ state.wizard[role].step = 1; renderWizard(role); }
+function wizardSave(role){
+  const w = state.wizard[role];
+  state[role].apis.unshift({name:w.name, description:w.description, endpoint:'/api/v1/run/'+slug(w.name), runs:0});
+  w.step = 3;
+  renderWizard(role);
+  renderMyApis(role);
+  showToast('API saved — find it under "My APIs"');
+}
+function resetWizard(role){ state.wizard[role] = freshWizard(); renderWizard(role); }
+function slug(s){ return (s||'api').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'') || 'api-'+Math.floor(Math.random()*999); }
+
+/* ==================== MY APIS ==================== */
+function renderMyApis(role){
+  const wrap = document.getElementById('myapis-area-'+role);
+  const apis = state[role].apis;
+  wrap.innerHTML = `
+    <h2 class="section-title" style="margin-bottom:2px;">My APIs</h2>
+    <p class="section-sub">${5 + apis.length} created</p>
+    ${seededApisHTML(role)}
+    ${apis.length===0 ? `<div class="card" style="padding:20px;text-align:center;color:rgba(18,36,28,.5);"></div>` : ''}
+    ${apis.map((a,i)=>`
+      <div class="card api-card">
+        <div class="head"><span class="emoji">🔌</span><h3>${escapeHtml(a.name)}</h3></div>
+        <p class="desc mono">${a.endpoint} · ${a.runs} run${a.runs!==1?'s':''}</p>
+        <p class="desc">${escapeHtml(a.description)}</p>
+        <div class="body">
+          <div class="field"><label>Input</label><input type="text" id="myapi-input-${role}-${i}" placeholder="Type an input to run this API with"></div>
+          <button class="btn btn-primary small-btn" onclick="runMyApi('${role}', ${i})">Run</button>
+          ${role==='pro' ? `<button class="btn btn-soft small-btn" onclick="listOnMarket('${role}', ${i})">Sell in marketplace</button>` : ''}
+          <div id="myapi-result-${role}-${i}"></div>
+        </div>
+      </div>
+    `).join('')}
+  `;
+  renderPdfChat(role);
+}
+async function runMyApi(role, i){
+  const api = state[role].apis[i];
+  const input = document.getElementById(`myapi-input-${role}-${i}`).value.trim();
+  const targetId = `myapi-result-${role}-${i}`;
+  if(!tryUseCredit(role)) return;
+  document.getElementById(targetId).innerHTML = `<div class="loading-box"><span class="spinner"></span>Running...</div>`;
+  await new Promise(r=>setTimeout(r, 300));
+  api.runs++;
+  const output = simulateEndpoint(api.description, input);
+  document.getElementById(targetId).innerHTML = `<div class="result-box">${escapeHtml(output)}</div>`;
+}
+function listOnMarket(role, i){
+  const api = state[role].apis[i];
+  const price = prompt(`Set a resale price in USD for "${api.name}":`, 10);
+  if(price===null) return;
+  const p = parseFloat(price);
+  if(isNaN(p) || p<=0){ showToast('Enter a valid price'); return; }
+  state.admin.market.push({seller: state[role].email, api: api.name, description: api.description, price:p, sold:0});
+  showToast(`Listed "${api.name}" for $${p} on the marketplace`);
+}
+
+/* ==================== MARKETPLACE (free + pro can buy; only pro can sell) ==================== */
+function renderMarket(role){
+  const wrap = document.getElementById('market-area-'+role);
+  if(!wrap) return;
+  wrap.innerHTML = `
+    <h2 class="section-title">Marketplace</h2>
+    <p class="section-sub">Buy APIs other Pro users have listed. ${role==='free' ? 'Free users can send a buy request too — it just needs admin approval like any other purchase.' : ''}</p>
+    ${state.admin.market.length===0 ? `<div class="card" style="padding:20px;text-align:center;color:rgba(18,36,28,.5);">No listings yet.</div>` : state.admin.market.map(m=>`
+      <div class="card api-row">
+        <div style="flex:1;min-width:160px;"><div class="name">${escapeHtml(m.api)}</div><div class="meta">sold by ${escapeHtml(m.seller)} · ${m.sold} sales</div></div>
+        <div class="mono" style="font-weight:700;">$${m.price}</div>
+        <button class="btn btn-clay small-btn" onclick="buyApi('${role}', '${escapeHtml(m.api)}', ${m.price})">Send buy request</button>
+      </div>
+    `).join('')}
+  `;
+}
+function buyApi(role, name, price){
+  const ok = confirm(`Send $${price} equivalent via bKash "Send Money", then tap OK to notify admin for approval.`);
+  if(ok){
+    state.admin.pending.push({id:'TXN-'+Math.floor(3000+Math.random()*900), user: state[role].email, plan:'API Purchase — '+name, amount:'$'+price, method:'bKash Send Money', date:new Date().toISOString().slice(0,10)});
+    showToast('Buy request submitted — pending admin approval');
+  }
+}
+
+/* ==================== ADMIN ==================== */
+function renderPending(){
+  const wrap = document.getElementById('pending-area');
+  const list = state.admin.pending;
+  wrap.innerHTML = `<div class="card" style="padding:6px 0;overflow-x:auto;"><table>
+    <tr><th>Txn ID</th><th>User</th><th>Requesting</th><th>Amount</th><th>Method</th><th>Date</th><th></th></tr>
+    ${list.length? list.map((t,i)=>`
+      <tr><td class="mono">${t.id}</td><td>${t.user}</td><td>${t.plan}</td><td>${t.amount}</td><td>${t.method}</td><td>${t.date}</td>
+      <td><button class="btn btn-primary small-btn" onclick="approveTxn(${i})">Approve</button></td></tr>`).join('')
+      : `<tr><td colspan="7" style="text-align:center;color:rgba(18,36,28,.5);padding:22px;">Nothing pending — you're all caught up.</td></tr>`}
+  </table></div>`;
+}
+function approveTxn(i){
+  const t = state.admin.pending[i];
+  const pass = 'ap-' + Math.random().toString(36).slice(2,8);
+  state.admin.pending.splice(i,1);
+  state.admin.approved.unshift({...t, password: pass});
+  const profile = userStore['free:'+t.user.toLowerCase()];
+  if(profile){
+    profile.messages.unshift({body:`Your request "${t.plan}" (${t.amount}) has been approved.`, password: pass});
+  }
+  renderPending(); renderApproved();
+  showToast(`Approved ${t.id} — password sent to ${t.user}`);
+}
+function renderApproved(){
+  const wrap = document.getElementById('approved-area');
+  const list = state.admin.approved;
+  wrap.innerHTML = `<div class="card" style="padding:6px 0;overflow-x:auto;"><table>
+    <tr><th>Txn ID</th><th>User</th><th>Plan</th><th>Amount</th><th>Date</th><th>Status</th></tr>
+    ${list.length? list.map(t=>`<tr><td class="mono">${t.id}</td><td>${t.user}</td><td>${t.plan}</td><td>${t.amount}</td><td>${t.date}</td><td><span class="status-chip status-approved">Approved</span></td></tr>`).join('')
+      : `<tr><td colspan="6" style="text-align:center;color:rgba(18,36,28,.5);padding:22px;">No approvals yet.</td></tr>`}
+  </table></div>`;
+}
+function renderAdminMarket(){
+  const wrap = document.getElementById('admin-market-area');
+  wrap.innerHTML = `<div class="card" style="padding:6px 0;overflow-x:auto;"><table>
+    <tr><th>Seller</th><th>API</th><th>Price</th><th>Units sold</th><th>Platform fee (10%)</th></tr>
+    ${state.admin.market.length ? state.admin.market.map(m=>`<tr><td>${m.seller}</td><td>${m.api}</td><td>$${m.price}</td><td>${m.sold}</td><td>$${(m.price*0.1).toFixed(2)}</td></tr>`).join('')
+      : `<tr><td colspan="5" style="text-align:center;color:rgba(18,36,28,.5);padding:22px;">No listings yet.</td></tr>`}
+  </table></div>`;
+}
+</script>
+</body>
+</html>

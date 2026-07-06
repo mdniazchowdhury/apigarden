@@ -1,0 +1,17 @@
+{
+  "name": "apigarden-secure-ai",
+  "version": "1.4.0",
+  "description": "APIGarden frontend with secure backend OpenRouter AI integration",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "latest",
+    "dotenv": "latest",
+    "express": "latest"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
