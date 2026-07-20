@@ -159,6 +159,7 @@ async function load(){
     state.tab = state.store.session.tab || (state.role === 'admin' ? 'admin' : 'info');
     state.screen = 'app';
     if(state.role === 'admin') await pullAdminFromBackend();
+    else await syncExtensionProfileFromCloud();
   }
   render();
 }
@@ -297,6 +298,37 @@ function infoView(){
     <p class="small">Works on normal webpages. Chrome system pages and some protected pages cannot be edited by extensions.</p>
   </div>`;
 }
+
+async function syncExtensionProfileToCloud(){
+  try{
+    const u=currentUser();
+    const email=u?.email || state.email;
+    if(!email) return;
+    const base=backendBase();
+    if(!base) return;
+    await fetch(`${base}/api/profile/${encodeURIComponent(email)}`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({savedInfo:u.savedInfo, updatedAt:new Date().toISOString()})
+    });
+  }catch(e){}
+}
+async function syncExtensionProfileFromCloud(){
+  try{
+    const u=currentUser();
+    const email=u?.email || state.email;
+    const base=backendBase();
+    if(!email || !base) return;
+    const r=await fetch(`${base}/api/profile/${encodeURIComponent(email)}`);
+    const d=await r.json();
+    if(d && d.savedInfo){
+      u.savedInfo={...(u.savedInfo||{}),...d.savedInfo};
+      state.store.users[key(state.role,state.email)]=u;
+      await save();
+    }
+  }catch(e){}
+}
+
 function saveInfo(){
   const u = currentUser();
   state.store.backendUrl = $('backendUrl')?.value.trim() || state.store.backendUrl || '';
@@ -311,7 +343,7 @@ function saveInfo(){
     dob:$('info-dob').value.trim()
   };
   state.store.users[key(state.role,state.email)] = u;
-  save().then(()=>toast('Saved'));
+  save().then(()=>{ syncExtensionProfileToCloud(); toast('Saved and synced'); });
 }
 function analyzerView(){
   return `<div class="card">

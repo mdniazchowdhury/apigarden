@@ -3,6 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
+import fs from "fs";
 
 dotenv.config();
 
@@ -231,6 +232,32 @@ app.post("/api/demo-state/sync-admin", (req, res) => {
   if (Array.isArray(pending)) demoState.pending = pending.map(cleanTxn);
   if (Array.isArray(approved)) demoState.approved = approved.map(cleanTxn);
   res.json({ ok: true, state: demoState });
+});
+
+
+// ================= USER DATA SYNC (Website <-> Extension) =================
+const SYNC_FILE = path.join(__dirname, "sync-users.json");
+function readSyncUsers(){
+  try { return JSON.parse(fs.readFileSync(SYNC_FILE,"utf8")); }
+  catch(e){ return {}; }
+}
+function writeSyncUsers(data){
+  fs.writeFileSync(SYNC_FILE, JSON.stringify(data,null,2));
+}
+app.get("/api/profile/:email", (req,res)=>{
+  const users = readSyncUsers();
+  res.json(users[String(req.params.email).toLowerCase()] || null);
+});
+app.post("/api/profile/:email", (req,res)=>{
+  const email = String(req.params.email).toLowerCase();
+  const users = readSyncUsers();
+  users[email] = {
+    ...(users[email]||{}),
+    ...req.body,
+    updatedAt: new Date().toISOString()
+  };
+  writeSyncUsers(users);
+  res.json({ok:true, profile:users[email]});
 });
 
 app.listen(PORT, () => {

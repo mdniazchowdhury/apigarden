@@ -436,6 +436,27 @@ function formInfoHTML(role){
     <button class="btn btn-primary small-btn" onclick="fillCurrentPageForm('${role}')">Fill current page form</button>
   </div>`;
 }
+
+async function syncProfileToCloud(role){
+  try{
+    const email = state[role]?.email || state[role]?.savedInfo?.email;
+    if(!email) return;
+    await fetch('/api/profile/'+encodeURIComponent(email),{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({savedInfo:state[role].savedInfo, updatedAt:new Date().toISOString()})
+    });
+  }catch(e){}
+}
+async function syncProfileFromCloud(role){
+  try{
+    const email = state[role]?.email || state[role]?.savedInfo?.email;
+    if(!email) return;
+    const r=await fetch('/api/profile/'+encodeURIComponent(email));
+    const d=await r.json();
+    if(d && d.savedInfo) state[role].savedInfo={...state[role].savedInfo,...d.savedInfo};
+  }catch(e){}
+}
+
 function saveInfo(role){
   state[role].savedInfo = {
     name: document.getElementById(`${role}-si-name`).value,
@@ -451,7 +472,8 @@ function saveInfo(role){
   const key = `${role}:${state[role].email.toLowerCase()}`;
   userStore[key] = state[role];
   saveAppData();
-  showToast('Saved. Matching forms can now be filled from the extension.');
+  syncProfileToCloud(role);
+  showToast('Saved and synced. Extension and website will use the same information.');
 }
 function extensionReady(){
   return typeof chrome !== 'undefined' && chrome.tabs && chrome.runtime;
@@ -1456,4 +1478,4 @@ document.addEventListener('keydown', (event)=>{
   }
 }, true);
 
-window.addEventListener('load', ()=>{ try{ renderMarket('free'); renderMarket('pro'); }catch(e){} });
+window.addEventListener('load', ()=>{ try{ renderMarket('free'); renderMarket('pro'); syncProfileFromCloud('free'); syncProfileFromCloud('pro'); }catch(e){} });
