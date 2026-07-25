@@ -144,7 +144,7 @@ function freshUser(role,email){
   return {
     role,email,
     credits:{used:0,max:6},
-    savedInfo:{name:'', email, phone:'', gender:'', country:'', city:'', location:'', dob:''},
+    savedInfo:{name:'', email, phone:'', gender:'', country:'', city:'', location:'', dob:'', address:'', customFields:[], disabledFields:[]},
     messages:[],
     apis: seeded ? JSON.parse(JSON.stringify(defaultApis)) : [],
     password:''
@@ -199,7 +199,7 @@ function login(role){
   u.email = email;
   if(role === 'pro' && passEl) u.password = passEl.value;
   state.store.session = {role, email, tab:state.tab, screen:'app'};
-  save().then(()=>setScreen('app'));
+  save().then(async()=>{ if(role !== 'admin') await syncExtensionProfileFromCloud(); setScreen('app'); });
 }
 async function logout(){
   state.screen='landing'; state.role=null; state.email=''; state.tab='info';
@@ -273,32 +273,40 @@ function renderApp(){
   appShell(content);
   if(state.tab === 'analyzer') loadCurrentUrl();
 }
+function fieldRow(id, label, value, removable=true){
+  return `<div class="profile-field" data-field-id="${esc(id)}">
+    <div class="field-head"><label>${esc(label)}</label>${removable ? `<button type="button" class="field-remove" data-action="removeProfileField" data-field="${esc(id)}" title="Remove field">Remove</button>` : ''}</div>
+    <input id="info-${esc(id)}" value="${esc(value || '')}">
+  </div>`;
+}
 function infoView(){
   const u = currentUser();
   const i = u.savedInfo || {};
+  const disabled = new Set(i.disabledFields || []);
+  const standard = [
+    ['name','Name'],['email','Email'],['phone','Phone'],['gender','Gender'],
+    ['country','Country'],['city','City'],['location','Location / Address'],['dob','Date of birth']
+  ];
+  const standardHtml = standard.filter(([id])=>!disabled.has(id)).map(([id,label])=>fieldRow(id,label,i[id] || (id==='email' ? u.email : ''))).join('');
+  const customHtml = (i.customFields || []).map((field,idx)=>`<div class="profile-field custom-profile-field" data-custom-index="${idx}">
+    <div class="field-head"><input class="custom-label" data-custom-label="${idx}" value="${esc(field.label || '')}" placeholder="Field name, e.g. Passport number"><button type="button" class="field-remove" data-action="removeCustomField" data-index="${idx}">Remove</button></div>
+    <input class="custom-value" data-custom-value="${idx}" value="${esc(field.value || '')}" placeholder="Enter information">
+  </div>`).join('');
   return `<div class="card">
     <h2>Saved Info</h2>
-    <p>Save your common details, then fill matching fields on the current Chrome page.</p>
+    <p>Information is linked to your login email and synchronised with the website.</p>
     <label>Backend URL / Render link</label>
     <input id="backendUrl" value="${esc(state.store.backendUrl || '')}" placeholder="https://api-garden.onrender.com">
-    <div class="grid2">
-      <div><label>Name</label><input id="info-name" value="${esc(i.name)}"></div>
-      <div><label>Email</label><input id="info-email" value="${esc(i.email || u.email)}"></div>
-      <div><label>Phone</label><input id="info-phone" value="${esc(i.phone)}"></div>
-      <div><label>Gender</label><input id="info-gender" value="${esc(i.gender)}"></div>
-      <div><label>Country</label><input id="info-country" value="${esc(i.country)}"></div>
-      <div><label>City</label><input id="info-city" value="${esc(i.city)}"></div>
-      <div><label>Location / Address</label><input id="info-location" value="${esc(i.location)}"></div>
-      <div><label>Date of birth</label><input id="info-dob" value="${esc(i.dob)}"></div>
-    </div>
+    <div class="grid2">${standardHtml}</div>
+    <div id="custom-fields">${customHtml}</div>
+    <div class="actions"><button class="btn soft" data-action="addCustomField">Add information</button>${disabled.size ? `<button class="btn soft" data-action="restoreProfileFields">Restore removed fields</button>` : ''}</div>
     <div class="actions">
       <button class="btn soft" data-action="saveInfo">Save info</button>
       <button class="btn primary" data-action="fillForm">Fill current page form</button>
     </div>
-    <p class="small">Works on normal webpages. Chrome system pages and some protected pages cannot be edited by extensions.</p>
+    <p class="small">You can add custom information or remove fields you do not need. Matching custom labels are also used during autofill.</p>
   </div>`;
 }
-
 async function syncExtensionProfileToCloud(){
   try{
     const u=currentUser();
@@ -329,21 +337,46 @@ async function syncExtensionProfileFromCloud(){
   }catch(e){}
 }
 
+function collectExtensionSavedInfo(){
+  const u = currentUser();
+  const previous = u.savedInfo || {};
+  const disabledFields = Array.isArray(previous.disabledFields) ? [...previous.disabledFields] : [];
+  const read = id => $(`info-${id}`)?.value.trim() || '';
+  const customFields = Array.from(document.querySelectorAll('.custom-profile-field')).map(row=>({
+    label: row.querySelector('.custom-label')?.value.trim() || '',
+    value: row.querySelector('.custom-value')?.value.trim() || ''
+  })).filter(field=>field.label || field.value);
+  return {
+    name:read('name'), email:read('email') || state.email, phone:read('phone'), gender:read('gender'),
+    country:read('country'), city:read('city'), location:read('location'), address:read('location'), dob:read('dob'),
+    customFields, disabledFields
+  };
+}
 function saveInfo(){
   const u = currentUser();
   state.store.backendUrl = $('backendUrl')?.value.trim() || state.store.backendUrl || '';
-  u.savedInfo = {
-    name:$('info-name').value.trim(),
-    email:$('info-email').value.trim(),
-    phone:$('info-phone').value.trim(),
-    gender:$('info-gender').value.trim(),
-    country:$('info-country').value.trim(),
-    city:$('info-city').value.trim(),
-    location:$('info-location').value.trim(),
-    dob:$('info-dob').value.trim()
-  };
+  u.savedInfo = collectExtensionSavedInfo();
   state.store.users[key(state.role,state.email)] = u;
-  save().then(()=>{ syncExtensionProfileToCloud(); toast('Saved and synced'); });
+  save().then(()=>{ syncExtensionProfileToCloud(); toast('Saved and synchronised'); });
+}
+function addCustomField(){
+  const u=currentUser();
+  u.savedInfo={...(u.savedInfo||{}), customFields:[...(u.savedInfo?.customFields||[]),{label:'',value:''}]};
+  state.store.users[key(state.role,state.email)]=u; render();
+}
+function removeCustomField(index){
+  const u=currentUser();
+  const fields=[...(u.savedInfo?.customFields||[])]; fields.splice(index,1);
+  u.savedInfo={...(u.savedInfo||{}),customFields:fields}; state.store.users[key(state.role,state.email)]=u; save(); render();
+}
+function removeProfileField(field){
+  const u=currentUser();
+  const info=collectExtensionSavedInfo();
+  info.disabledFields=Array.from(new Set([...(info.disabledFields||[]),field]));
+  u.savedInfo=info; state.store.users[key(state.role,state.email)]=u; save(); render();
+}
+function restoreProfileFields(){
+  const u=currentUser(); u.savedInfo={...(u.savedInfo||{}),disabledFields:[]}; state.store.users[key(state.role,state.email)]=u; save(); render();
 }
 function analyzerView(){
   return `<div class="card">
@@ -385,11 +418,13 @@ function apisView(){
 }
 function upgradeView(){
   return `<div class="card">
-    <h2>Upgrade Request</h2>
-    <p>Send a Pro Monthly payment request to admin. To show this request in the website admin panel, paste the Render backend URL once.</p>
+    <h2>Upgrade Plans</h2>
+    <p>Choose the same plans available on the website.</p>
     <label>Backend URL / Render link</label>
     <input id="upgrade-backend" value="${esc(state.store.backendUrl || '')}" placeholder="https://api-garden.onrender.com">
-    <div class="actions"><button class="btn primary" data-action="requestUpgrade">Send Pro Monthly Request</button></div>
+    <div class="extension-plan"><span class="badge">Current</span><h3>Free Trial</h3><div class="plan-price">৳0</div><p>5 ready-made APIs · 6 free AI runs</p></div>
+    <div class="extension-plan featured"><span class="badge">Popular</span><h3>Pro Monthly</h3><div class="plan-price">৳1200 <small>/ month</small></div><p>Unlimited runs · Sell on marketplace · Saved autofill</p><button class="btn primary" data-action="requestUpgrade" data-plan="Pro Monthly" data-amount="৳1200">Choose Pro Monthly</button></div>
+    <div class="extension-plan"><h3>Pro Yearly</h3><div class="plan-price">৳9000 <small>/ year</small></div><p>Everything in monthly · 2 months free</p><button class="btn soft" data-action="requestUpgrade" data-plan="Pro Yearly" data-amount="৳9000">Choose Pro Yearly</button></div>
   </div>`;
 }
 function renderAdmin(){
@@ -540,6 +575,24 @@ Page text sample:
 ${sample || 'No readable text found.'}`;
 }
 
+function formatAnalyzerResult(text){
+  const safe = String(text || '').replace(/[#*|_`>]/g,'').replace(/\r/g,'').trim();
+  if(!safe) return '<p>No answer returned.</p>';
+  const lines=safe.split('\n').map(x=>x.trim()).filter(Boolean);
+  const pairs=[]; const paragraphs=[]; const numbered=[];
+  lines.forEach(line=>{
+    const n=line.match(/^\d+[.)]\s*(.+)$/);
+    if(n){ numbered.push(n[1]); return; }
+    const pair=line.match(/^([^:]{2,45}):\s*(.+)$/);
+    if(pair) pairs.push([pair[1],pair[2]]); else paragraphs.push(line.replace(/^[-•]+\s*/,''));
+  });
+  let html=paragraphs.map(x=>`<p>${esc(x)}</p>`).join('');
+  if(pairs.length>=2) html+=`<table class="answer-table">${pairs.map(([a,b])=>`<tr><th>${esc(a)}</th><td>${esc(b)}</td></tr>`).join('')}</table>`;
+  else html+=pairs.map(([a,b])=>`<p><strong>${esc(a)}:</strong> ${esc(b)}</p>`).join('');
+  if(numbered.length) html+=`<ol>${numbered.map(x=>`<li>${esc(x)}</li>`).join('')}</ol>`;
+  return html;
+}
+
 async function analyze(){
   const q = $('an-question').value.trim();
   if(!q){ toast('Write a question first'); return; }
@@ -588,7 +641,9 @@ Rules:
 - For article questions, summarize or extract the requested name/detail from page text.
 - If the exact answer is not visible, say what matching options you found instead.
 - Keep it concise.
-- Do not use markdown bold stars.`;
+- Return clean plain text only.
+- Do not use markdown, hash signs, asterisks, pipes, underscores, or decorative symbols.
+- Use short labelled lines when comparison is useful.`;
 
   try{
     result.innerHTML = `<div class="result">Analyzing with AI...</div>`;
@@ -597,10 +652,10 @@ Rules:
       backendInput
     );
     const finalAnswer = clean(answer) || localAnswer;
-    result.innerHTML = `<div class="result">${esc(finalAnswer).replace(/\n/g,'<br>')}</div>`;
+    result.innerHTML = `<div class="result">${formatAnalyzerResult(finalAnswer)}</div>`;
   }catch(e){
     // Important: even if Render URL/API fails, still show a page-based answer.
-    result.innerHTML = `<div class="result">${esc(clean(localAnswer)).replace(/\n/g,'<br>')}<hr><span class="small">AI backend was not reachable, so this is a local page-based suggestion. Paste/check your Render backend URL for smarter answers.</span></div>`;
+    result.innerHTML = `<div class="result">${formatAnalyzerResult(localAnswer)}<hr><span class="small">AI backend was not reachable, so this is a local page-based suggestion. Check the backend URL for smarter answers.</span></div>`;
   }
 
   await save();
@@ -612,7 +667,7 @@ async function reloadMessages(){
   toast(synced ? 'Admin messages reloaded from website' : 'Messages reloaded locally');
   render();
 }
-async function requestUpgrade(){
+async function requestUpgrade(plan="Pro Monthly", amount="৳1200"){
   const upgradeBackend = $('upgrade-backend')?.value.trim();
   if(upgradeBackend) state.store.backendUrl = upgradeBackend;
   const u = currentUser();
@@ -620,8 +675,8 @@ async function requestUpgrade(){
     id:'TXN-'+Math.floor(1000+Math.random()*9000),
     user:u.email,
     buyer:u.email,
-    plan:'Pro Monthly',
-    amount:'৳1200',
+    plan,
+    amount,
     method:'bKash Send Money',
     date:new Date().toISOString().slice(0,10)
   };
@@ -705,11 +760,15 @@ document.addEventListener('click', async (e)=>{
   if(action === 'logout'){ logout(); }
   if(action === 'tab'){ state.tab = btn.dataset.tab; await saveSession(); render(); }
   if(action === 'saveInfo'){ saveInfo(); await save(); }
+  if(action === 'addCustomField'){ addCustomField(); }
+  if(action === 'removeCustomField'){ removeCustomField(Number(btn.dataset.index)); }
+  if(action === 'removeProfileField'){ removeProfileField(btn.dataset.field); }
+  if(action === 'restoreProfileFields'){ restoreProfileFields(); }
   if(action === 'fillForm'){ fillForm(); }
   if(action === 'reloadUrl'){ loadCurrentUrl(); toast('URL reloaded'); }
   if(action === 'analyze'){ analyze(); }
   if(action === 'reloadMessages'){ reloadMessages(); }
-  if(action === 'requestUpgrade'){ requestUpgrade(); }
+  if(action === 'requestUpgrade'){ requestUpgrade(btn.dataset.plan || 'Pro Monthly', btn.dataset.amount || '৳1200'); }
   if(action === 'reloadAdmin'){ const adminBackend = $('admin-backend')?.value.trim(); state.store = await storageGet(); if(adminBackend) state.store.backendUrl = adminBackend; await save(); const synced = await pullAdminFromBackend(); toast(synced ? 'Website requests reloaded' : 'Extension requests reloaded'); render(); }
   if(action === 'approve'){ approve(Number(btn.dataset.index)); }
   if(action === 'reject'){ reject(Number(btn.dataset.index)); }

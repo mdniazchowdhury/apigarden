@@ -20,6 +20,18 @@ const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 app.use(express.static(__dirname));
+// Persistent APIGarden data store (keeps website, extension and admin messages shared)
+const DATA_FILE = path.join(__dirname, "apigarden-data.json");
+function saveAppData(){
+  try { fs.writeFileSync(DATA_FILE, JSON.stringify({demoState}, null, 2)); } catch(e){}
+}
+function loadAppData(){
+  try {
+    const saved = JSON.parse(fs.readFileSync(DATA_FILE,"utf8"));
+    if(saved.demoState) Object.assign(demoState, saved.demoState);
+  } catch(e){}
+}
+
 
 function requireOpenRouterKey() {
   if (!process.env.OPENROUTER_API_KEY) {
@@ -142,7 +154,8 @@ Rules:
 - Answer clearly, practically, and directly.
 - For recommendation APIs, give specific suggestions with short reasons.
 - If the answer depends on live data, exact prices, stock, private data, or unavailable context, say what is missing instead of pretending.
-- Do not reveal hidden reasoning. Return only the final useful answer.`
+- Do not reveal hidden reasoning. Return only the final useful answer.
+- When the request is for a page analyzer, use clean plain text without markdown symbols such as hashes, asterisks, pipes, underscores, or code fences.`
       },
       {
         role: "user",
@@ -215,6 +228,7 @@ app.post("/api/demo-state/messages", (req, res) => {
   const key = messageKey(role || "free", email || "");
   if (!demoState.userMessages[key]) demoState.userMessages[key] = [];
   demoState.userMessages[key].unshift(cleanMessage(message));
+  saveAppData();
   res.json({ ok: true, messages: demoState.userMessages[key] });
 });
 
@@ -231,6 +245,7 @@ app.post("/api/demo-state/sync-admin", (req, res) => {
   const { pending, approved } = req.body || {};
   if (Array.isArray(pending)) demoState.pending = pending.map(cleanTxn);
   if (Array.isArray(approved)) demoState.approved = approved.map(cleanTxn);
+  saveAppData();
   res.json({ ok: true, state: demoState });
 });
 
@@ -260,6 +275,7 @@ app.post("/api/profile/:email", (req,res)=>{
   res.json({ok:true, profile:users[email]});
 });
 
+loadAppData();
 app.listen(PORT, () => {
   console.log(`APIGarden server running at http://localhost:${PORT}`);
   console.log(`Using OpenRouter model: ${MODEL}`);

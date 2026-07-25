@@ -13,7 +13,7 @@ const SEEDED_EMAIL = 'ishita.chowdhury@northsouth.edu';
 function freshProfile(role, email){
   const base = {
     email,
-    savedInfo: {name:'', email, phone:'', gender:'', country:'', city:'', location:'', dob:'', address:''},
+    savedInfo: {name:'', email, phone:'', gender:'', country:'', city:'', location:'', dob:'', address:'', customFields:[], disabledFields:[]},
     apis: [], pdfText: '', pdfName: '',
     chatlog: { grammar: [], pdf: [] },
     seeded: email.toLowerCase() === SEEDED_EMAIL
@@ -186,17 +186,19 @@ window.addEventListener('popstate', (event)=>{
   go(view || 'landing', false);
 });
 history.replaceState({view:'landing'}, '', location.hash || '#landing');
-function loginFree(){
+async function loginFree(){
   loadAppData();
   const email = (document.getElementById('free-email').value.trim() || 'you@example.com').toLowerCase();
   state.free = getProfile('free', email);
+  await syncProfileFromCloud('free');
   go('free-app');
   renderWizard('free'); renderMyApis('free'); renderMarket('free'); updateCreditChip(); checkAIBackend('free');
 }
-function loginPro(){
+async function loginPro(){
   loadAppData();
   const email = (document.getElementById('pro-email').value.trim() || 'pro.user@example.com').toLowerCase();
   state.pro = getProfile('pro', email);
+  await syncProfileFromCloud('pro');
   go('pro-app');
   renderWizard('pro'); renderMyApis('pro'); renderMarket('pro'); checkAIBackend('pro');
 }
@@ -418,25 +420,35 @@ function messagesHTML(list){
   if(!list.length) return `<div class="card" style="padding:16px;text-align:center;color:rgba(18,36,28,.5);font-size:13.5px;">No messages yet.</div>`;
   return list.map(m=>`<div class="card msg-item"><div class="from">From ${escapeHtml(m.from || 'Admin')}</div><div class="body">${escapeHtml(cleanAIText(m.body || ''))}</div>${m.password? `<span class="pw">${escapeHtml(m.password)}</span>`:''}</div>`).join('');
 }
+function websiteFieldRow(role,id,label,value){
+  return `<div class="field" data-profile-field="${escapeHtml(id)}"><div style="display:flex;justify-content:space-between;align-items:center;"><label>${escapeHtml(label)}</label><button type="button" class="btn btn-ghost small-btn" style="padding:3px 7px;font-size:10px;" onclick="removeWebsiteField('${role}','${escapeHtml(id)}')">Remove</button></div><input type="text" id="${role}-si-${escapeHtml(id)}" value="${escapeHtml(value || '')}"></div>`;
+}
 function formInfoHTML(role){
-  const info = state[role].savedInfo;
+  const info = state[role].savedInfo || {};
+  const disabled = new Set(info.disabledFields || []);
+  const standard=[['name','Full name'],['email','Email'],['phone','Phone'],['gender','Gender'],['country','Country'],['city','City'],['location','Location / Address'],['dob','Date of birth']];
+  const standardHtml=standard.filter(([id])=>!disabled.has(id)).map(([id,label])=>websiteFieldRow(role,id,label,info[id] || (id==='email'?state[role].email:''))).join('');
+  const customHtml=(info.customFields||[]).map((field,idx)=>`<div class="card" style="padding:10px;margin-top:8px;"><div style="display:flex;gap:8px;align-items:center;"><input type="text" id="${role}-custom-label-${idx}" value="${escapeHtml(field.label||'')}" placeholder="Field name, e.g. Passport number"><button class="btn btn-ghost small-btn" onclick="removeWebsiteCustomField('${role}',${idx})">Remove</button></div><input style="margin-top:8px;" type="text" id="${role}-custom-value-${idx}" value="${escapeHtml(field.value||'')}" placeholder="Enter information"></div>`).join('');
   return `<div class="card" style="padding:18px;">
-    <p class="hint" style="margin-top:0;">Saved once, reused everywhere. In the Chrome extension, use this to fill matching fields on the current page.</p>
-    <div class="grid2">
-      <div class="field"><label>Full name</label><input type="text" id="${role}-si-name" value="${escapeHtml(info.name || '')}"></div>
-      <div class="field"><label>Email</label><input type="text" id="${role}-si-email" value="${escapeHtml(info.email || '')}"></div>
-      <div class="field"><label>Phone</label><input type="text" id="${role}-si-phone" value="${escapeHtml(info.phone || '')}"></div>
-      <div class="field"><label>Gender</label><input type="text" id="${role}-si-gender" value="${escapeHtml(info.gender || '')}" placeholder="e.g. Female"></div>
-      <div class="field"><label>Country</label><input type="text" id="${role}-si-country" value="${escapeHtml(info.country || '')}" placeholder="e.g. Bangladesh"></div>
-      <div class="field"><label>City</label><input type="text" id="${role}-si-city" value="${escapeHtml(info.city || '')}" placeholder="e.g. Dhaka"></div>
-      <div class="field"><label>Location / Address</label><input type="text" id="${role}-si-location" value="${escapeHtml(info.location || info.address || '')}" placeholder="e.g. Bashundhara R/A, Dhaka"></div>
-      <div class="field"><label>Date of birth</label><input type="text" id="${role}-si-dob" value="${escapeHtml(info.dob || '')}" placeholder="YYYY-MM-DD"></div>
-    </div>
+    <p class="hint" style="margin-top:0;">Saved by login email and synchronised between website and extension.</p>
+    <div class="grid2">${standardHtml}</div>
+    <div>${customHtml}</div>
+    <button class="btn btn-soft small-btn" onclick="addWebsiteCustomField('${role}')">Add information</button>
+    ${disabled.size?`<button class="btn btn-soft small-btn" onclick="restoreWebsiteFields('${role}')">Restore removed fields</button>`:''}
     <button class="btn btn-soft small-btn" onclick="saveInfo('${role}')">Save info</button>
     <button class="btn btn-primary small-btn" onclick="fillCurrentPageForm('${role}')">Fill current page form</button>
   </div>`;
 }
-
+function collectWebsiteInfo(role){
+  const old=state[role].savedInfo||{};
+  const read=id=>document.getElementById(`${role}-si-${id}`)?.value || '';
+  const customFields=(old.customFields||[]).map((_,idx)=>({label:document.getElementById(`${role}-custom-label-${idx}`)?.value.trim()||'',value:document.getElementById(`${role}-custom-value-${idx}`)?.value.trim()||''})).filter(x=>x.label||x.value);
+  return {name:read('name'),email:read('email')||state[role].email,phone:read('phone'),gender:read('gender'),country:read('country'),city:read('city'),location:read('location'),address:read('location'),dob:read('dob'),customFields,disabledFields:[...(old.disabledFields||[])]};
+}
+function addWebsiteCustomField(role){ state[role].savedInfo=collectWebsiteInfo(role); state[role].savedInfo.customFields.push({label:'',value:''}); drawerPanel(`${role}-form`); }
+function removeWebsiteCustomField(role,index){ state[role].savedInfo=collectWebsiteInfo(role); state[role].savedInfo.customFields.splice(index,1); drawerPanel(`${role}-form`); }
+function removeWebsiteField(role,field){ const info=collectWebsiteInfo(role); info.disabledFields=Array.from(new Set([...(info.disabledFields||[]),field])); state[role].savedInfo=info; drawerPanel(`${role}-form`); }
+function restoreWebsiteFields(role){ state[role].savedInfo=collectWebsiteInfo(role); state[role].savedInfo.disabledFields=[]; drawerPanel(`${role}-form`); }
 async function syncProfileToCloud(role){
   try{
     const email = state[role]?.email || state[role]?.savedInfo?.email;
@@ -458,22 +470,12 @@ async function syncProfileFromCloud(role){
 }
 
 function saveInfo(role){
-  state[role].savedInfo = {
-    name: document.getElementById(`${role}-si-name`).value,
-    email: document.getElementById(`${role}-si-email`).value,
-    phone: document.getElementById(`${role}-si-phone`).value,
-    gender: document.getElementById(`${role}-si-gender`).value,
-    country: document.getElementById(`${role}-si-country`).value,
-    city: document.getElementById(`${role}-si-city`).value,
-    location: document.getElementById(`${role}-si-location`).value,
-    dob: document.getElementById(`${role}-si-dob`).value,
-    address: document.getElementById(`${role}-si-location`).value
-  };
+  state[role].savedInfo = collectWebsiteInfo(role);
   const key = `${role}:${state[role].email.toLowerCase()}`;
   userStore[key] = state[role];
   saveAppData();
   syncProfileToCloud(role);
-  showToast('Saved and synced. Extension and website will use the same information.');
+  showToast('Saved and synchronised. Extension and website now use the same information.');
 }
 function extensionReady(){
   return typeof chrome !== 'undefined' && chrome.tabs && chrome.runtime;
@@ -1452,7 +1454,7 @@ function runInlineAction(code, clickedEl){
   const match = code.match(/^([A-Za-z_$][\w$]*)\((.*)\)$/);
   if(!match) return false;
   const fnName = match[1];
-  const allowed = {go,loginFree,loginPro,loginAdmin,switchTab,openDrawer,closeDrawer,logout,drawerPanel,reloadUserMessages,adminRefresh,startUpgrade,sendUpgradeRequest,saveInfo,fillCurrentPageForm,runAnalyzer,runCurrency,runWeather,runQuote,runGrammar,runPdfQuestion,resetWizard,nextStep,testWizard,saveWizard,runMyApi,runMyApiWithPage,deleteMyApi,listOnMarket,buyApi,approveTxn,rejectTxn};
+  const allowed = {go,loginFree,loginPro,loginAdmin,switchTab,openDrawer,closeDrawer,logout,drawerPanel,reloadUserMessages,adminRefresh,startUpgrade,sendUpgradeRequest,saveInfo,addWebsiteCustomField,removeWebsiteCustomField,removeWebsiteField,restoreWebsiteFields,fillCurrentPageForm,runAnalyzer,runCurrency,runWeather,runQuote,runGrammar,runPdfQuestion,resetWizard,nextStep,testWizard,saveWizard,runMyApi,runMyApiWithPage,deleteMyApi,listOnMarket,buyApi,approveTxn,rejectTxn};
   if(!allowed[fnName]) return false;
   allowed[fnName](...parseInlineArgs(match[2], clickedEl));
   return true;

@@ -63,6 +63,10 @@
     if(/\b(city|town|district)\b/.test(label)) return data.city;
     if(/\b(location|address|area|street|road|state|province)\b/.test(label)) return data.location || data.address || data.city;
     if(/\b(date of birth|dob|birth date|birthday)\b/.test(label)) return data.dob;
+    for(const field of (data.customFields || [])){
+      const customLabel = norm(field.label);
+      if(customLabel && (label.includes(customLabel) || customLabel.includes(label))) return field.value;
+    }
     return '';
   }
 
