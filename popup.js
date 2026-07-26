@@ -31,6 +31,36 @@ function clean(text){
 function esc(s){
   return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+
+function safeFileName(value){
+  return String(value || 'api-result').trim().toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'') || 'api-result';
+}
+function downloadJsonFile(data, filename){
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename.endsWith('.json') ? filename : `${filename}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+}
+function downloadApiJson(index){
+  const api = currentUser().apis?.[index];
+  if(!api) return;
+  const data = api.lastOutcome || {
+    apiName: api.name,
+    description: api.description,
+    type: api.type || 'custom',
+    finalUrl: api.finalUrl || '',
+    recording: api.recording || null,
+    status: 'created',
+    generatedAt: new Date().toISOString()
+  };
+  downloadJsonFile(data, `${safeFileName(api.name)}-outcome.json`);
+}
+
 function toast(msg){
   const t = $('toast');
   t.textContent = msg;
@@ -480,8 +510,26 @@ async function runRecordedApi(index){
   const res=await chrome.runtime.sendMessage({type:'APIGARDEN_REPLAY_RECORDING',recording:api.recording || {finalUrl:api.finalUrl}});
   if(!res?.ok){ toast(res?.error || 'Could not open recorded API'); return; }
   api.runs=(api.runs||0)+1;
+  const extracted = res.extraction?.ok ? res.extraction : {results:[],resultCount:0};
+  api.lastOutcome = {
+    apiName: api.name,
+    description: api.description,
+    query: extracted.query || api.recording?.steps?.filter(step=>step.type==='input').at(-1)?.value || '',
+    status: 'success',
+    sourceUrl: extracted.sourceUrl || api.finalUrl || api.recording?.finalUrl || '',
+    pageTitle: extracted.pageTitle || '',
+    resultCount: extracted.resultCount || 0,
+    results: extracted.results || [],
+    recording: {
+      capturedActions: api.recording?.steps?.length || 0,
+      startedAt: api.recording?.startedAt || '',
+      stoppedAt: api.recording?.stoppedAt || ''
+    },
+    generatedAt: new Date().toISOString(),
+    note: extracted.resultCount ? 'Live visible product data extracted from the opened webpage.' : 'The page opened, but no matching product cards with visible price/image data were detected.'
+  };
   await save();
-  toast('Recorded API opened in a new tab');
+  toast(extracted.resultCount ? `${extracted.resultCount} live results captured` : 'Page opened; no product results detected');
   render();
 }
 
@@ -490,7 +538,7 @@ function apisView(){
   return `<div class="card">
     <h2>My APIs</h2>
     <p class="small">Deleting an API removes it from your list. It does not restore used run count.</p>
-    ${(u.apis || []).length ? u.apis.map((a,i)=>`<div class="api-row"><div><b>${esc(a.name)}</b><p>${esc(a.description)}</p><p class="small">${a.runs || 0} runs${a.type==='recorded'?' · Recorded automation':''}</p></div><div class="api-actions">${a.type==='recorded'?`<button class="btn primary" data-action="runRecordedApi" data-index="${i}">Run API</button>`:''}<button class="btn danger" data-action="deleteApi" data-index="${i}">Delete</button></div></div>`).join('') : `<p>No APIs yet.</p>`}
+    ${(u.apis || []).length ? u.apis.map((a,i)=>`<div class="api-row"><div><b>${esc(a.name)}</b><p>${esc(a.description)}</p><p class="small">${a.runs || 0} runs${a.type==='recorded'?' · Recorded automation':''}</p></div><div class="api-actions">${a.type==='recorded'?`<button class="btn primary" data-action="runRecordedApi" data-index="${i}">Run API</button>`:''}<button class="btn soft" data-action="downloadApiJson" data-index="${i}">Download JSON</button><button class="btn danger" data-action="deleteApi" data-index="${i}">Delete</button></div></div>`).join('') : `<p>No APIs yet.</p>`}
     <hr>
     <h3>Create quick API</h3>
     <label>API name</label><input id="api-name" placeholder="Hotel chooser API">
@@ -854,6 +902,7 @@ document.addEventListener('click', async (e)=>{
   if(action === 'stopRecording'){ stopRecording(); }
   if(action === 'discardRecording'){ discardRecording(); }
   if(action === 'runRecordedApi'){ runRecordedApi(Number(btn.dataset.index)); }
+  if(action === 'downloadApiJson'){ downloadApiJson(Number(btn.dataset.index)); }
   if(action === 'requestUpgrade'){ requestUpgrade(btn.dataset.plan || 'Pro Monthly', btn.dataset.amount || '৳1200'); }
   if(action === 'reloadAdmin'){ const adminBackend = $('admin-backend')?.value.trim(); state.store = await storageGet(); if(adminBackend) state.store.backendUrl = adminBackend; await save(); const synced = await pullAdminFromBackend(); toast(synced ? 'Website requests reloaded' : 'Extension requests reloaded'); render(); }
   if(action === 'approve'){ approve(Number(btn.dataset.index)); }

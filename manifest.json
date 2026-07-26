@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "APIGarden",
-  "version": "1.4.0",
-  "description": "Generate, test, and monetize APIs with a secure AI backend.",
+  "version": "1.5.0",
+  "description": "Record browser workflows and export live visible product results with names, prices, images, and links as JSON.",
   "action": {
     "default_title": "APIGarden",
     "default_popup": "popup.html"

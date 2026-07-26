@@ -391,7 +391,9 @@ ${pageText.slice(0, 8500)}
 
 Answer clearly. Start with the best answer or best option, then give short reasons. Do not use markdown bold stars.`;
     const output = await runGeneratedApi('Analyze the current webpage and answer the user question using the page content.', input);
-    document.getElementById(targetId).innerHTML = `<div class="result-box">${formatAIOutput(output)}</div>`;
+    api.lastOutcome = createApiOutcomeJson(api, input, output);
+    saveAppData();
+    document.getElementById(targetId).innerHTML = outcomeResultHtml(role, i, output);
   }catch(err){
     setError(targetId, err);
   }
@@ -577,6 +579,42 @@ function seededApisHTML(role){
 }
 
 function setLoading(targetId){ document.getElementById(targetId).innerHTML = `<div class="loading-box"><span class="spinner"></span>Working...</div>`; }
+
+function safeFileName(value){
+  return String(value || 'api-result').trim().toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'') || 'api-result';
+}
+function createApiOutcomeJson(api, input, output, extra={}){
+  return {
+    apiName: api?.name || 'APIGarden API',
+    endpoint: api?.endpoint || '',
+    description: api?.description || '',
+    query: input || '',
+    outcome: output,
+    status: 'success',
+    generatedAt: new Date().toISOString(),
+    ...extra
+  };
+}
+function downloadJsonFile(data, filename){
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename.endsWith('.json') ? filename : `${filename}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+}
+function exportApiOutcome(role, i){
+  const api = state[role]?.apis?.[i];
+  if(!api?.lastOutcome){ showToast('Run this API first to create its JSON outcome.'); return; }
+  downloadJsonFile(api.lastOutcome, `${safeFileName(api.name)}-${safeFileName(api.lastOutcome.query || 'outcome')}.json`);
+}
+function outcomeResultHtml(role, i, output){
+  return `<div class="result-box">${formatAIOutput(output)}</div><button class="btn btn-soft small-btn" style="margin-top:10px;" onclick="exportApiOutcome('${role}', ${i})">Download JSON</button>`;
+}
+
 function setError(targetId, err){ document.getElementById(targetId).innerHTML = `<div class="error-box">⚠ ${escapeHtml(err.message || String(err))}</div>`; }
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function stripStars(value){ return String(value || '').replace(/\*\*/g,'').replace(/__([^_]+)__/g,'$1').replace(/\*([^*\n]+)\*/g,'$1'); }
@@ -1133,8 +1171,9 @@ ${pageText.slice(0, 7000)}
 Give a clear recommendation with the best option first, short reasons, and anything I should avoid.`;
     const output = await runGeneratedApi(api.description, input);
     api.runs++;
+    api.lastOutcome = createApiOutcomeJson(api, userNeed, output, {mode:'current-page-analysis', pageContextCaptured:true});
     saveAppData();
-    document.getElementById(targetId).innerHTML = `<div class="result-box">${formatAIOutput(output)}</div>`;
+    document.getElementById(targetId).innerHTML = outcomeResultHtml(role, i, output);
   }catch(err){
     setError(targetId, err);
   }

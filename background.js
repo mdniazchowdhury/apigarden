@@ -1,5 +1,26 @@
 const RECORDING_KEY = 'apigarden_recorder_v1';
 
+function waitForTabComplete(tabId, timeoutMs=20000){
+  return new Promise(resolve=>{
+    let done=false;
+    const finish=(value)=>{ if(done) return; done=true; clearTimeout(timer); chrome.tabs.onUpdated.removeListener(listener); resolve(value); };
+    const listener=(id,info)=>{ if(id===tabId && info.status==='complete') finish(true); };
+    const timer=setTimeout(()=>finish(false), timeoutMs);
+    chrome.tabs.onUpdated.addListener(listener);
+    chrome.tabs.get(tabId).then(tab=>{ if(tab.status==='complete') finish(true); }).catch(()=>{});
+  });
+}
+async function extractProductsFromTab(tabId){
+  await waitForTabComplete(tabId);
+  await new Promise(r=>setTimeout(r,1800));
+  try{
+    return await chrome.tabs.sendMessage(tabId,{type:'APIGARDEN_EXTRACT_PRODUCTS'});
+  }catch(error){
+    return {ok:false,error:error.message || String(error),results:[]};
+  }
+}
+
+
 const emptyRecording = () => ({
   isRecording: false,
   startedAt: null,
@@ -99,7 +120,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse)=>{
       const targetUrl = recording.finalUrl || recording.steps?.filter(s=>s.type==='navigate').at(-1)?.url;
       if(!isRecordableUrl(targetUrl)) throw new Error('No replayable website URL was captured.');
       const tab = await chrome.tabs.create({url:targetUrl, active:true});
-      sendResponse({ok:true, tabId:tab.id, url:targetUrl});
+      const extraction = await extractProductsFromTab(tab.id);
+      sendResponse({ok:true, tabId:tab.id, url:targetUrl, extraction});
       return;
     }
   })().catch(error=>sendResponse({ok:false,error:error.message || String(error)}));

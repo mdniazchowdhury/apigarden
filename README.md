@@ -76,3 +76,17 @@ This version automatically uses the same website origin for backend API calls. T
 6. The generated item appears under **My APIs**. Select **Run API** to open the captured final result URL in a new Chrome tab.
 
 The recorder captures navigation, clicks, non-password input changes, Enter key submissions, and form submissions. Password values are never recorded.
+
+
+## JSON outcome files
+
+Every API result can now be exported as a `.json` file.
+
+- Website: Run an API from **My APIs**, then select **Download JSON** below the result.
+- Extension: Run a recorded API, then select **Download JSON** beside that API.
+- Submission examples are included in the `json-outcomes/` folder for Water Heater, Zebra, and Colorful Fridge.
+
+Each JSON file contains the API name, query, outcome, status, result URL (when applicable), and generation time.
+
+## Live JSON product extraction
+Recorded APIs now attempt to extract visible product information from the final opened page. The downloaded JSON may include `product name`, `live price`, `product image`, and `product url`. Values are taken from the live webpage DOM; the extension does not invent missing data. Extraction success depends on the target website's HTML structure and whether the products are visible after the page loads.

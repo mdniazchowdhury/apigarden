@@ -199,6 +199,120 @@ ${bodyText}`
     sendRecordedAction({type:'submit',selector:selectorFor(event.target),action:event.target.action || ''});
   }, true);
 
+
+
+  function absoluteUrl(value){
+    try{ return new URL(value || '', location.href).href; }catch(e){ return ''; }
+  }
+
+  function extractPrice(text){
+    const value = String(text || '').replace(/\s+/g, ' ').trim();
+    const patterns = [
+      /(?:৳|BDT|Tk\.?|TK\.?|টাকা)\s*[\d,]+(?:\.\d{1,2})?/i,
+      /[\d,]+(?:\.\d{1,2})?\s*(?:৳|BDT|Tk\.?|TK\.?|টাকা)/i,
+      /(?:price|মূল্য)\s*[:\-]?\s*(?:৳|BDT|Tk\.?)?\s*[\d,]+(?:\.\d{1,2})?/i
+    ];
+    for(const pattern of patterns){
+      const match = value.match(pattern);
+      if(match) return match[0].replace(/^price\s*[:\-]?\s*/i, '').trim();
+    }
+    return '';
+  }
+
+  function textOf(el){ return String(el?.innerText || el?.textContent || '').replace(/\s+/g,' ').trim(); }
+
+  function findProductName(card){
+    const selectors = [
+      '[itemprop="name"]','[data-product-name]','[class*="product-name"]','[class*="product-title"]',
+      '[class*="item-name"]','[class*="item-title"]','h1','h2','h3','h4','a[title]','img[alt]'
+    ];
+    for(const selector of selectors){
+      const el=card.querySelector(selector);
+      const candidate=(el?.getAttribute?.('data-product-name') || el?.getAttribute?.('title') || el?.getAttribute?.('alt') || textOf(el)).trim();
+      if(candidate && candidate.length>=3 && candidate.length<=180 && !/^add to cart|buy now|view details|quick view$/i.test(candidate)) return candidate;
+    }
+    const lines=textOf(card).split(/\n|\s{2,}/).map(x=>x.trim()).filter(Boolean);
+    return lines.find(x=>x.length>=3 && x.length<=180 && !extractPrice(x)) || '';
+  }
+
+  function findPrice(card){
+    const selectors=['[itemprop="price"]','[data-price]','[class*="price"]','[id*="price"]'];
+    for(const selector of selectors){
+      const el=card.querySelector(selector);
+      if(!el) continue;
+      const raw=el.getAttribute('content') || el.getAttribute('data-price') || textOf(el);
+      const found=extractPrice(raw) || raw.trim();
+      if(found && /\d/.test(found)) return found;
+    }
+    return extractPrice(textOf(card));
+  }
+
+  function findImage(card){
+    const img=card.querySelector('img[src],img[data-src],img[data-lazy-src],source[srcset]');
+    if(!img) return '';
+    const src=img.getAttribute('src') || img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || (img.getAttribute('srcset')||'').split(',')[0].trim().split(' ')[0];
+    return absoluteUrl(src);
+  }
+
+  function findProductUrl(card){
+    const link=card.matches?.('a[href]') ? card : card.querySelector('a[href]');
+    return absoluteUrl(link?.getAttribute('href') || '');
+  }
+
+  function extractProducts(){
+    const selectors = [
+      '[itemtype*="Product"]','[data-product-id]','[data-product]','[class*="product-card"]','[class*="product-item"]',
+      '[class*="product-grid"] > *','[class*="products"] > *','[class*="listing"] > article','article'
+    ];
+    const cards=[];
+    const seenNodes=new Set();
+    for(const selector of selectors){
+      document.querySelectorAll(selector).forEach(el=>{
+        if(seenNodes.has(el)) return;
+        const txt=textOf(el);
+        if(txt.length<5 || txt.length>2500) return;
+        if(!el.querySelector('img') && !extractPrice(txt)) return;
+        seenNodes.add(el); cards.push(el);
+      });
+    }
+    if(!cards.length){
+      document.querySelectorAll('li,div').forEach(el=>{
+        if(cards.length>=150) return;
+        const txt=textOf(el);
+        if(txt.length<8 || txt.length>900) return;
+        if(el.querySelector('img') && extractPrice(txt)) cards.push(el);
+      });
+    }
+
+    const results=[];
+    const seen=new Set();
+    for(const card of cards){
+      const productName=findProductName(card);
+      const livePrice=findPrice(card);
+      const productImage=findImage(card);
+      const productUrl=findProductUrl(card);
+      if(!productName || (!livePrice && !productImage)) continue;
+      const key=(productName+'|'+livePrice+'|'+productUrl).toLowerCase();
+      if(seen.has(key)) continue;
+      seen.add(key);
+      results.push({
+        'product name': productName,
+        'live price': livePrice,
+        'product image': productImage,
+        'product url': productUrl
+      });
+      if(results.length>=100) break;
+    }
+    return {
+      query: new URLSearchParams(location.search).get('q') || new URLSearchParams(location.search).get('search') || '',
+      sourceUrl: location.href,
+      pageTitle: document.title || '',
+      resultCount: results.length,
+      results,
+      extractedAt: new Date().toISOString()
+    };
+  }
+
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse)=>{
     if(msg && msg.type === 'APIGARDEN_PING'){
       sendResponse({ok:true});
@@ -212,6 +326,11 @@ ${bodyText}`
     if(msg && msg.type === 'APIGARDEN_GET_PAGE_CONTEXT'){
       const ctx = getPageContext();
       sendResponse({ok:true, text:ctx.text, url:ctx.url, title:ctx.title, items:ctx.items});
+      return true;
+    }
+    if(msg && msg.type === 'APIGARDEN_EXTRACT_PRODUCTS'){
+      const data = extractProducts();
+      sendResponse({ok:true, ...data});
       return true;
     }
   });
