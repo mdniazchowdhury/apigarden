@@ -65,3 +65,14 @@ The answer quality depends on the model and the information you provide. For liv
 
 ## Important deployment fix
 This version automatically uses the same website origin for backend API calls. That means on Render it calls `https://your-site.onrender.com/api/...`, not `http://localhost:3000/api/...`. Currency conversion also goes through the backend so USD to BDT works better.
+
+## Activity Recorder (v1.4.0)
+
+1. Log in to the Chrome extension and open the **Recorder** tab.
+2. Select **Start recording**. The extension badge displays **REC**.
+3. The popup may be closed; recording continues in the Manifest V3 background service worker.
+4. Browse, search, type, submit forms, and open result pages normally.
+5. Reopen the extension, return to **Recorder**, and select **Stop and create API**.
+6. The generated item appears under **My APIs**. Select **Run API** to open the captured final result URL in a new Chrome tab.
+
+The recorder captures navigation, clicks, non-password input changes, Enter key submissions, and form submissions. Password values are never recorded.

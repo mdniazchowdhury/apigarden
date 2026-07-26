@@ -147,6 +147,58 @@ ${bodyText}`
     };
   }
 
+
+  function cssEscape(value){
+    if(window.CSS && CSS.escape) return CSS.escape(String(value));
+    return String(value).replace(/[^a-zA-Z0-9_-]/g, ch => `\\${ch}`);
+  }
+  function selectorFor(el){
+    if(!el || el.nodeType !== 1) return '';
+    if(el.id) return `#${cssEscape(el.id)}`;
+    const testId = el.getAttribute('data-testid') || el.getAttribute('data-test') || el.getAttribute('data-qa');
+    if(testId) return `[data-testid="${String(testId).replace(/"/g,'\\"')}"]`;
+    const parts=[];
+    let node=el;
+    while(node && node.nodeType===1 && node!==document.body && parts.length<5){
+      let part=node.tagName.toLowerCase();
+      const name=node.getAttribute('name');
+      if(name) part += `[name="${String(name).replace(/"/g,'\\"')}"]`;
+      else {
+        const siblings=node.parentElement ? Array.from(node.parentElement.children).filter(x=>x.tagName===node.tagName) : [];
+        if(siblings.length>1) part += `:nth-of-type(${siblings.indexOf(node)+1})`;
+      }
+      parts.unshift(part);
+      node=node.parentElement;
+    }
+    return parts.join(' > ');
+  }
+  function sendRecordedAction(action){
+    try{ chrome.runtime.sendMessage({type:'APIGARDEN_RECORDED_ACTION', action, url:location.href}); }catch(e){}
+  }
+  document.addEventListener('click', event=>{
+    const el=event.target.closest('a,button,input,[role="button"],[onclick]');
+    if(!el) return;
+    sendRecordedAction({
+      type:'click', selector:selectorFor(el), text:(el.innerText || el.value || el.getAttribute('aria-label') || '').trim().slice(0,160),
+      href:el.href || '', tag:el.tagName.toLowerCase()
+    });
+  }, true);
+  document.addEventListener('change', event=>{
+    const el=event.target;
+    if(!el?.matches?.('input,textarea,select')) return;
+    if((el.type || '').toLowerCase()==='password') return;
+    sendRecordedAction({type:'input',selector:selectorFor(el),value:String(el.value || '').slice(0,500),tag:el.tagName.toLowerCase(),inputType:el.type || ''});
+  }, true);
+  document.addEventListener('keydown', event=>{
+    const el=event.target;
+    if(event.key !== 'Enter' || !el?.matches?.('input,textarea')) return;
+    if((el.type || '').toLowerCase()==='password') return;
+    sendRecordedAction({type:'keypress',key:'Enter',selector:selectorFor(el),value:String(el.value || '').slice(0,500)});
+  }, true);
+  document.addEventListener('submit', event=>{
+    sendRecordedAction({type:'submit',selector:selectorFor(event.target),action:event.target.action || ''});
+  }, true);
+
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse)=>{
     if(msg && msg.type === 'APIGARDEN_PING'){
       sendResponse({ok:true});

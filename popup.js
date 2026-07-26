@@ -17,7 +17,8 @@ let state = {
   role:null,
   email:'',
   tab:'info',
-  store:null
+  store:null,
+  recording:null
 };
 
 function clean(text){
@@ -161,6 +162,7 @@ async function load(){
     if(state.role === 'admin') await pullAdminFromBackend();
     else await syncExtensionProfileFromCloud();
   }
+  await refreshRecordingStatus(false);
   render();
 }
 async function save(){
@@ -256,6 +258,7 @@ function tabs(){
     ['info','Info / Autofill'],
     ['analyzer','Analyzer'],
     ['messages','Messages'],
+    ['recording','Recorder'],
     ['apis','My APIs']
   ];
   if(state.role === 'free') items.push(['upgrade','Upgrade']);
@@ -267,11 +270,13 @@ function renderApp(){
     state.tab === 'info' ? infoView() :
     state.tab === 'analyzer' ? analyzerView() :
     state.tab === 'messages' ? messagesView() :
+    state.tab === 'recording' ? recordingView() :
     state.tab === 'apis' ? apisView() :
     upgradeView()
   );
   appShell(content);
   if(state.tab === 'analyzer') loadCurrentUrl();
+
 }
 function fieldRow(id, label, value, removable=true){
   return `<div class="profile-field" data-field-id="${esc(id)}">
@@ -403,12 +408,89 @@ function messagesView(){
     ${(u.messages || []).length ? u.messages.map(m=>`<div class="card msg"><div class="from">From ${esc(m.from || 'Admin')}</div><div>${esc(clean(m.body))}</div>${m.password?`<span class="pw">${esc(m.password)}</span>`:''}</div>`).join('') : `<p>No messages yet.</p>`}
   </div>`;
 }
+
+function recordingView(){
+  const rec = state.recording || {isRecording:false,steps:[],finalUrl:''};
+  const count = Array.isArray(rec.steps) ? rec.steps.length : 0;
+  const status = rec.isRecording ? 'Recording is active' : 'Recorder is stopped';
+  return `<div class="card recorder-card">
+    <div class="recording-head"><div><h2>Activity Recorder</h2><p>${status}. Closing this popup will not stop it.</p></div><span class="record-dot ${rec.isRecording?'active':''}"></span></div>
+    <div class="record-summary"><b>${count}</b> captured actions</div>
+    ${rec.finalUrl ? `<label>Latest captured page</label><div class="record-url">${esc(rec.finalUrl)}</div>` : ''}
+    <label>API name</label><input id="record-api-name" value="${esc(rec.title ? `${rec.title} Automation` : 'Recorded Browser Automation')}" placeholder="Walton colourful fridge API">
+    <div class="actions">
+      ${rec.isRecording
+        ? `<button class="btn danger" data-action="stopRecording">Stop and create API</button>`
+        : `<button class="btn primary" data-action="startRecording">Start recording</button>`}
+      ${!rec.isRecording && count ? `<button class="btn soft" data-action="discardRecording">Discard recording</button>` : ''}
+    </div>
+    <p class="small">Start recording, browse in any Chrome tab, search or click normally, then return here and stop. The REC badge remains visible while recording.</p>
+  </div>`;
+}
+async function refreshRecordingStatus(shouldRender=false){
+  try{
+    const res = await chrome.runtime.sendMessage({type:'APIGARDEN_RECORDING_STATUS'});
+    if(res?.ok) state.recording = res.recording;
+  }catch(e){ state.recording = {isRecording:false,steps:[],finalUrl:''}; }
+  if(shouldRender) render();
+}
+async function startRecording(){
+  const res = await chrome.runtime.sendMessage({type:'APIGARDEN_START_RECORDING'});
+  if(!res?.ok){ toast(res?.error || 'Could not start recording'); return; }
+  state.recording = res.recording;
+  toast('Recording started. You may close the popup.');
+  render();
+}
+async function stopRecording(){
+  const desiredName = $('record-api-name')?.value.trim();
+  const res = await chrome.runtime.sendMessage({type:'APIGARDEN_STOP_RECORDING'});
+  if(!res?.ok){ toast(res?.error || 'Could not stop recording'); return; }
+  state.recording = res.recording;
+  const rec = res.recording || {};
+  if(!rec.finalUrl){ toast('Stopped, but no normal website page was captured'); render(); return; }
+  const u = currentUser();
+  u.apis = u.apis || [];
+  u.apis.unshift({
+    name: desiredName || rec.title || 'Recorded Browser Automation',
+    description: `Recorded browser workflow with ${(rec.steps||[]).length} actions. Reopens the captured result page automatically.`,
+    runs:0,
+    type:'recorded',
+    finalUrl:rec.finalUrl,
+    recording:{startedAt:rec.startedAt,stoppedAt:rec.stoppedAt,steps:rec.steps || [],finalUrl:rec.finalUrl,title:rec.title || ''}
+  });
+  state.store.users[key(state.role,state.email)] = u;
+  await save();
+  await chrome.runtime.sendMessage({type:'APIGARDEN_CLEAR_RECORDING'});
+  state.recording = {isRecording:false,steps:[],finalUrl:''};
+  state.tab='apis';
+  await saveSession();
+  toast('Recorded API created');
+  render();
+}
+async function discardRecording(){
+  const res = await chrome.runtime.sendMessage({type:'APIGARDEN_CLEAR_RECORDING'});
+  if(res?.ok) state.recording=res.recording;
+  toast('Recording discarded');
+  render();
+}
+async function runRecordedApi(index){
+  const u=currentUser();
+  const api=u.apis?.[index];
+  if(!api || api.type!=='recorded') return;
+  const res=await chrome.runtime.sendMessage({type:'APIGARDEN_REPLAY_RECORDING',recording:api.recording || {finalUrl:api.finalUrl}});
+  if(!res?.ok){ toast(res?.error || 'Could not open recorded API'); return; }
+  api.runs=(api.runs||0)+1;
+  await save();
+  toast('Recorded API opened in a new tab');
+  render();
+}
+
 function apisView(){
   const u = currentUser();
   return `<div class="card">
     <h2>My APIs</h2>
     <p class="small">Deleting an API removes it from your list. It does not restore used run count.</p>
-    ${(u.apis || []).length ? u.apis.map((a,i)=>`<div class="api-row"><div><b>${esc(a.name)}</b><p>${esc(a.description)}</p><p class="small">${a.runs || 0} runs</p></div><button class="btn danger" data-action="deleteApi" data-index="${i}">Delete</button></div>`).join('') : `<p>No APIs yet.</p>`}
+    ${(u.apis || []).length ? u.apis.map((a,i)=>`<div class="api-row"><div><b>${esc(a.name)}</b><p>${esc(a.description)}</p><p class="small">${a.runs || 0} runs${a.type==='recorded'?' · Recorded automation':''}</p></div><div class="api-actions">${a.type==='recorded'?`<button class="btn primary" data-action="runRecordedApi" data-index="${i}">Run API</button>`:''}<button class="btn danger" data-action="deleteApi" data-index="${i}">Delete</button></div></div>`).join('') : `<p>No APIs yet.</p>`}
     <hr>
     <h3>Create quick API</h3>
     <label>API name</label><input id="api-name" placeholder="Hotel chooser API">
@@ -768,6 +850,10 @@ document.addEventListener('click', async (e)=>{
   if(action === 'reloadUrl'){ loadCurrentUrl(); toast('URL reloaded'); }
   if(action === 'analyze'){ analyze(); }
   if(action === 'reloadMessages'){ reloadMessages(); }
+  if(action === 'startRecording'){ startRecording(); }
+  if(action === 'stopRecording'){ stopRecording(); }
+  if(action === 'discardRecording'){ discardRecording(); }
+  if(action === 'runRecordedApi'){ runRecordedApi(Number(btn.dataset.index)); }
   if(action === 'requestUpgrade'){ requestUpgrade(btn.dataset.plan || 'Pro Monthly', btn.dataset.amount || '৳1200'); }
   if(action === 'reloadAdmin'){ const adminBackend = $('admin-backend')?.value.trim(); state.store = await storageGet(); if(adminBackend) state.store.backendUrl = adminBackend; await save(); const synced = await pullAdminFromBackend(); toast(synced ? 'Website requests reloaded' : 'Extension requests reloaded'); render(); }
   if(action === 'approve'){ approve(Number(btn.dataset.index)); }
