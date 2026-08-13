@@ -483,7 +483,8 @@ const VOICE_SITES = {
   walton: {label:'Walton', base:'https://waltonbd.com', search:'https://waltonbd.com/index.php?route=product/search&search={query}&description=true'},
   daraz: {label:'Daraz Bangladesh', base:'https://www.daraz.com.bd', search:'https://www.daraz.com.bd/catalog/?q={query}'},
   pickaboo: {label:'Pickaboo', base:'https://www.pickaboo.com', search:'https://www.pickaboo.com/search?q={query}'},
-  rokomari: {label:'Rokomari', base:'https://www.rokomari.com', search:'https://www.rokomari.com/search?term={query}'}
+  rokomari: {label:'Rokomari', base:'https://www.rokomari.com', search:'https://www.rokomari.com/search?term={query}'},
+  trip: {label:'Trip.com', base:'https://www.trip.com', search:'https://www.trip.com/flights/'}
 };
 function chooseBestVoiceSite(text){
   const t=String(text||'').toLowerCase();
@@ -491,7 +492,8 @@ function chooseBestVoiceSite(text){
     {rx:/\b(shoe|shoes|sneaker|sneakers|sandal|sandals|loafer|loafers|boot|boots|footwear)\b/, key:'bata'},
     {rx:/\b(book|books|novel|textbook|stationery|author)\b/, key:'rokomari'},
     {rx:/\b(phone|mobile|smartphone|laptop|tablet|headphone|earphone|camera|smartwatch|gadget)\b/, key:'pickaboo'},
-    {rx:/\b(fridge|refrigerator|freezer|television|tv|ac|air conditioner|washing machine|water heater|home appliance)\b/, key:'walton'}
+    {rx:/\b(fridge|refrigerator|freezer|television|tv|ac|air conditioner|washing machine|water heater|home appliance)\b/, key:'walton'},
+    {rx:/\b(flight|flights|airfare|airline|airport|travel)\b/, key:'trip'}
   ];
   const found=rules.find(r=>r.rx.test(t));
   return {...VOICE_SITES[found?.key || 'daraz'], key:found?.key || 'daraz', autoSelected:true};
@@ -523,15 +525,15 @@ function voiceDraftView(d){
     <p>${esc(d.description)}</p>
     <div class="intent-grid">
       <div><span>Website</span><b>${esc(d.siteLabel || d.domain || 'Detected website')}</b></div>
-      <div><span>Search</span><b>${esc(d.query || 'All products')}</b></div>
-      <div><span>Price range</span><b>${d.minPrice!=null || d.maxPrice!=null ? `৳ ${Number(d.minPrice||0).toLocaleString()} – ${d.maxPrice!=null?`৳ ${Number(d.maxPrice).toLocaleString()}`:'No max'}` : 'Not specified'}</b></div>
+      <div><span>${d.agentType==='travel'?'Route':'Search'}</span><b>${esc(d.query || (d.agentType==='travel'?'Flight search':'All products'))}</b></div>
+      <div><span>${d.agentType==='travel'?'Mode':'Price range'}</span><b>${d.agentType==='travel'?'Autonomous page analysis':(d.minPrice!=null || d.maxPrice!=null ? `৳ ${Number(d.minPrice||0).toLocaleString()} – ${d.maxPrice!=null?`৳ ${Number(d.maxPrice).toLocaleString()}`:'No max'}` : 'Not specified')}</b></div>
     </div>
     <div class="record-url">${esc(d.targetUrl)}</div>
     <div class="actions">
       <button class="btn primary" data-action="runVoiceDraft">▶ Run API</button>
       ${ran?`<button class="btn soft" data-action="saveVoiceDraft">Save API</button><button class="btn soft" data-action="downloadVoiceDraft">Download JSON</button>`:''}
     </div>
-    ${ran?`<div class="voice-run-summary"><b>${Number(d.lastOutcome.resultCount||0)}</b> matching live product${Number(d.lastOutcome.resultCount||0)===1?'':'s'} captured from the opened page.</div>`:`<p class="small">Run it first. APIGarden will open the detected website, search the product, apply the spoken price range on the page, and capture the visible product data. Save only after you confirm it works.</p>`}
+    ${ran?`<div class="voice-run-summary"><b>${Number(d.lastOutcome.resultCount||0)}</b> live result${Number(d.lastOutcome.resultCount||0)===1?'':'s'} captured from the opened page.</div>`:`<p class="small">Run it first. APIGarden will open the detected website and ${d.agentType==='travel'?'analyze the page, fill the route, search, verify the result page, and capture visible live results':'search the product, apply the spoken price range on the page, and capture the visible product data'}. Save only after you confirm it works.</p>`}
   </div>`;
 }
 
@@ -598,23 +600,35 @@ function detectVoiceQuery(text, site, prices){
   }
   return q || 'products';
 }
+function detectTravelIntent(text){
+  const t=String(text||'').trim();
+  if(!/\b(flight|flights|airfare|airline|airport|trip\.com)\b/i.test(t)) return null;
+  let origin='', destination='', departDate='';
+  const route=t.match(/(?:from\s+)?([A-Za-z][A-Za-z .'-]{1,40}?)\s+(?:to|→)\s+([A-Za-z][A-Za-z .'-]{1,50}?)(?=\s+(?:on|for|depart|departure|return|check|search|show|find|all|available|flight|flights)\b|[,.]|$)/i);
+  if(route){ origin=route[1].replace(/^(?:go|fly|flight|flights|select|search)\s+/i,'').trim(); destination=route[2].trim(); }
+  const iso=t.match(/\b(20\d{2}-\d{2}-\d{2})\b/); if(iso) departDate=iso[1];
+  return {origin,destination,departDate};
+}
 function parseVoiceIntent(raw){
   const transcript=normalizeVoiceText(raw);
   if(!transcript) throw new Error('Please record or type a voice command first.');
   let site=detectVoiceSite(transcript);
+  const travel=detectTravelIntent(transcript);
   const askedAny=/\b(any website|any site|best website|best site|choose (?:a|the) website|choose (?:a|the) site|from anywhere)\b/i.test(transcript);
+  if(travel && (!site || askedAny)) site={...VOICE_SITES.trip,key:'trip',domain:'www.trip.com',autoSelected:true};
   if(!site || askedAny) site=chooseBestVoiceSite(transcript);
   const prices=detectVoicePrices(transcript);
-  const query=detectVoiceQuery(transcript,site,prices);
-  const targetUrl=site.search.replace('{query}',encodeURIComponent(query));
+  const query=travel ? [travel.origin,travel.destination].filter(Boolean).join(' to ') || 'flights' : detectVoiceQuery(transcript,site,prices);
+  const mode=travel?'agent':'catalog';
+  const targetUrl=travel ? site.base : site.search.replace('{query}',encodeURIComponent(query));
   const range = prices.maxPrice!=null ? `৳${Number(prices.minPrice||0).toLocaleString()}–৳${Number(prices.maxPrice).toLocaleString()}` : prices.minPrice!=null ? `above ৳${Number(prices.minPrice).toLocaleString()}` : '';
-  const cleanName=`${site.label} ${query}${range?' '+range:''} API`.replace(/\s+/g,' ').trim();
+  const cleanName=travel ? `${site.label} ${query} Flight Search API` : `${site.label} ${query}${range?' '+range:''} API`;
   return {
     id:`voice-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
-    name: cleanName.length>90 ? `${site.label} ${query} API` : cleanName,
-    description:`Voice-created website API that searches ${site.label} for ${query}${range?` in the ${range} price range`:''}, then captures live visible product data.`,
-    transcript,siteKey:site.key,siteLabel:site.label,domain:site.domain,baseUrl:site.base,autoSelectedSite:!!site.autoSelected,
-    query,minPrice:prices.minPrice,maxPrice:prices.maxPrice,targetUrl,createdAt:new Date().toISOString(),type:'voice'
+    name: cleanName.length>90 ? `${site.label} ${travel?'Flight Search':query} API` : cleanName,
+    description: travel ? `Autonomous browser API that opens ${site.label}, analyzes the page, enters the requested flight route, searches, verifies the result page, and extracts visible live flight results.` : `Voice-created website API that searches ${site.label} for ${query}${range?` in the ${range} price range`:''}, then captures live visible product data.`,
+    transcript,siteKey:site.key,siteLabel:site.label,domain:site.domain||new URL(site.base).hostname,baseUrl:site.base,autoSelectedSite:!!site.autoSelected,
+    query,minPrice:prices.minPrice,maxPrice:prices.maxPrice,targetUrl,createdAt:new Date().toISOString(),type:'voice',mode,agentType:travel?'travel':null,travel
   };
 }
 function updateVoiceTranscriptDisplay(){
@@ -699,10 +713,10 @@ async function runVoiceDraft(){
   if(!res?.ok){ state.voice.lastError=res?.error || 'Could not run voice API'; render(); return; }
   const extracted=res.extraction?.ok?res.extraction:{results:[],resultCount:0,sourceUrl:res.url||d.targetUrl,pageTitle:''};
   d.lastOutcome={
-    apiName:d.name, description:d.description, query:d.query, status:'success', sourceUrl:extracted.sourceUrl||res.url||d.targetUrl,
+    apiName:d.name, description:d.description, query:d.query, status:extracted.agent?.status==='needs_user_action'?'needs_user_action':'success', sourceUrl:extracted.sourceUrl||res.url||d.targetUrl,
     pageTitle:extracted.pageTitle||'', resultCount:extracted.resultCount||0, results:extracted.results||[],
-    filters:{minPrice:d.minPrice,maxPrice:d.maxPrice,currency:'BDT'}, voice:{transcript:d.transcript,website:d.siteLabel},
-    generatedAt:new Date().toISOString(), note:extracted.resultCount?'Live visible product data extracted after the voice search and price filter were applied.':'The website opened and the filter ran, but no matching visible product cards were detected.'
+    filters:d.agentType==='travel'?null:{minPrice:d.minPrice,maxPrice:d.maxPrice,currency:'BDT'}, voice:{transcript:d.transcript,website:d.siteLabel}, travel:d.travel||null, agent:extracted.agent||null,
+    generatedAt:new Date().toISOString(), note:extracted.resultCount?(d.agentType==='travel'?'Autonomous browser agent reached a live result page and extracted visible flight results.':'Live visible product data extracted after the voice search and price filter were applied.'):(d.agentType==='travel'?'The autonomous browser agent attempted the workflow but could not verify visible final flight results.':'The website opened and the filter ran, but no matching visible product cards were detected.')
   };
   d.finalUrl=d.lastOutcome.sourceUrl;
   state.voice.draft=d; state.store.voiceDrafts[key(state.role,state.email)]=d; await save(); await chrome.storage.local.remove([VOICE_RESULT_KEY]); toast(extracted.resultCount?`${extracted.resultCount} matching live products found`:'Website opened; no matching product cards detected'); render();
@@ -724,7 +738,7 @@ async function runVoiceApi(index){
   if(!res?.ok){ toast(res?.error||'Could not run voice API'); return; }
   const ex=res.extraction?.ok?res.extraction:{results:[],resultCount:0};
   api.runs=(api.runs||0)+1; api.finalUrl=ex.sourceUrl||res.url||api.finalUrl;
-  api.lastOutcome={apiName:api.name,description:api.description,query:intent.query||'',status:'success',sourceUrl:api.finalUrl,pageTitle:ex.pageTitle||'',resultCount:ex.resultCount||0,results:ex.results||[],filters:{minPrice:intent.minPrice??null,maxPrice:intent.maxPrice??null,currency:'BDT'},voice:{transcript:intent.transcript||'',website:intent.siteLabel||intent.domain||''},generatedAt:new Date().toISOString(),note:ex.resultCount?'Live visible product data extracted after the saved voice API ran.':'The website opened, but no matching visible product cards were detected.'};
+  api.lastOutcome={apiName:api.name,description:api.description,query:intent.query||'',status:ex.agent?.status==='needs_user_action'?'needs_user_action':'success',sourceUrl:api.finalUrl,pageTitle:ex.pageTitle||'',resultCount:ex.resultCount||0,results:ex.results||[],filters:intent.agentType==='travel'?null:{minPrice:intent.minPrice??null,maxPrice:intent.maxPrice??null,currency:'BDT'},voice:{transcript:intent.transcript||'',website:intent.siteLabel||intent.domain||''},travel:intent.travel||null,agent:ex.agent||null,generatedAt:new Date().toISOString(),note:ex.resultCount?(intent.agentType==='travel'?'Autonomous browser agent reached the live result page and captured visible flight results.':'Live visible product data extracted after the saved voice API ran.'):(intent.agentType==='travel'?'The autonomous workflow ran, but final visible flight results could not be verified.':'The website opened, but no matching visible product cards were detected.')};
   await save(); await chrome.storage.local.remove([VOICE_RESULT_KEY]); toast(ex.resultCount?`${ex.resultCount} matching live products captured`:'Page opened; no matching products detected'); render();
 }
 

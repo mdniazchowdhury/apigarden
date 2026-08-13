@@ -157,29 +157,50 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse)=>{
     }
     if(message?.type === 'APIGARDEN_RUN_VOICE_API'){
       const intent = message.intent || {};
-      const targetUrl = String(intent.targetUrl || intent.finalUrl || intent.baseUrl || '').trim();
+      const autonomous = intent.mode === 'agent' || intent.agentType;
+      const targetUrl = String((autonomous ? (intent.baseUrl || intent.targetUrl) : intent.targetUrl) || intent.finalUrl || intent.baseUrl || '').trim();
       if(!isRecordableUrl(targetUrl)) throw new Error('No valid website URL was detected from the voice command.');
       const tab = await chrome.tabs.create({url:targetUrl, active:true});
       await waitForTabComplete(tab.id, 9000);
-      await new Promise(r=>setTimeout(r,500));
+      await new Promise(r=>setTimeout(r,350));
       let extraction;
-      try{
-        extraction = await sendWithRetry(tab.id,{
-          type:'APIGARDEN_VOICE_FILTER_PRODUCTS',
-          query:intent.query || '',
-          minPrice:intent.minPrice ?? null,
-          maxPrice:intent.maxPrice ?? null,
-          siteLabel:intent.siteLabel || intent.domain || ''
-        },{tries:4,delay:350});
-      }catch(error){
-        extraction = await extractProductsFromTab(tab.id);
+      if(autonomous){
+        let first;
+        try{ first = await sendWithRetry(tab.id,{type:'APIGARDEN_AUTONOMOUS_AGENT',intent},{tries:5,delay:250}); }
+        catch(error){ first={ok:false,error:error.message||String(error),results:[],resultCount:0}; }
+        // The first pass may trigger a SPA/full-page navigation. Re-read the destination page
+        // and run one verification pass so the final JSON comes from the result page.
+        await new Promise(r=>setTimeout(r,1200));
+        await waitForTabComplete(tab.id, 7000);
+        let second;
+        try{ second = await sendWithRetry(tab.id,{type:'APIGARDEN_AUTONOMOUS_AGENT',intent:{...intent,verificationPass:true}},{tries:4,delay:250}); }
+        catch(error){ second=null; }
+        extraction = (second?.resultCount || 0) >= (first?.resultCount || 0) ? (second || first) : first;
+        if(!extraction?.resultCount){
+          try{
+            const generic = await sendWithRetry(tab.id,{type:'APIGARDEN_GET_PAGE_CONTEXT'},{tries:2,delay:200});
+            extraction = {...(extraction||{}), sourceUrl:extraction?.sourceUrl || generic?.url || targetUrl, pageTitle:extraction?.pageTitle || generic?.title || '', pageContextCaptured:!!generic?.ok};
+          }catch(e){}
+        }
+      }else{
+        try{
+          extraction = await sendWithRetry(tab.id,{
+            type:'APIGARDEN_VOICE_FILTER_PRODUCTS',
+            query:intent.query || '',
+            minPrice:intent.minPrice ?? null,
+            maxPrice:intent.maxPrice ?? null,
+            siteLabel:intent.siteLabel || intent.domain || ''
+          },{tries:4,delay:300});
+        }catch(error){
+          extraction = await extractProductsFromTab(tab.id);
+        }
       }
       const lastOutcome={
-        apiName:intent.name || 'Voice Website API', description:intent.description || '', query:intent.query || '', status:'success',
+        apiName:intent.name || 'Voice Website API', description:intent.description || '', query:intent.query || '', status:(extraction?.agent?.status==='needs_user_action'?'needs_user_action':'success'),
         sourceUrl:extraction?.sourceUrl || targetUrl, pageTitle:extraction?.pageTitle || '', resultCount:extraction?.resultCount || 0,
         results:extraction?.results || [], filters:{minPrice:intent.minPrice ?? null,maxPrice:intent.maxPrice ?? null,currency:'BDT'},
-        voice:{transcript:intent.transcript || '',website:intent.siteLabel || intent.domain || ''}, generatedAt:new Date().toISOString(),
-        note:extraction?.resultCount ? 'Live visible product data extracted after the voice search and price filter were applied.' : 'The website opened and the filter ran, but no matching visible product cards were detected.'
+        voice:{transcript:intent.transcript || '',website:intent.siteLabel || intent.domain || ''}, agent:extraction?.agent || null, travel:intent.travel || null, generatedAt:new Date().toISOString(),
+        note:extraction?.resultCount ? (autonomous?'Autonomous browser agent reached a live result page and extracted visible results.':'Live visible product data extracted after the voice search and price filter were applied.') : (autonomous?'The autonomous browser agent attempted the requested workflow but could not verify visible final results.':'The website opened and the filter ran, but no matching visible product cards were detected.')
       };
       await chrome.storage.local.set({[VOICE_RESULT_KEY]:{kind:message.runKind || 'draft',id:message.runId || intent.id || '',lastOutcome,finishedAt:new Date().toISOString()}});
       sendResponse({ok:true,tabId:tab.id,url:targetUrl,extraction});

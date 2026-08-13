@@ -113,3 +113,13 @@ The Chrome extension now includes a **Voice API** tab.
 Example command: `Go to Bata website and create an API for shoes from 0 to 3000 taka.`
 
 Built-in website routing is included for Bata Bangladesh, Walton, Daraz Bangladesh, Pickaboo, and Rokomari. Explicit domains such as `example.com` are also accepted; for other spoken website names APIGarden makes a best-effort `.com` search URL.
+
+## Autonomous Browser Agent (v1.8.0)
+
+Voice/Text API commands can now describe a multi-step website goal, not only a direct product filter. Example:
+
+`Go to Trip.com, select Flights, enter Dhaka to Saudi Arabia, search, and show all available flights.`
+
+For recognized travel instructions APIGarden opens the real site and performs a best-effort semantic workflow: inspect visible controls, click the Flights section, identify From/To fields from labels/ARIA/placeholder/nearby text, fill autocomplete suggestions, submit the search, wait for navigation, verify the destination page, and extract visible result cards into JSON.
+
+If a date was not supplied, APIGarden preserves a website-provided default date where available rather than silently inventing a date. CAPTCHA, login gates, unsupported widgets, and ambiguous/missing required information may still require user action.

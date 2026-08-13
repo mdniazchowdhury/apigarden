@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "APIGarden",
-  "version": "1.7.1",
-  "description": "Create browser APIs by voice on the website or extension with visible Save API and JSON export controls, faster real-site runs, auto-selected stores, and live product extraction.",
+  "version": "1.8.0",
+  "description": "APIGarden autonomous Voice API: analyzes live pages, performs multi-step browser actions, verifies results, saves APIs, and exports live JSON.",
   "action": {
     "default_title": "APIGarden",
     "default_popup": "popup.html"

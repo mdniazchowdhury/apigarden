@@ -367,6 +367,126 @@ ${bodyText}`
 
 
 
+
+
+  // ==================== AUTONOMOUS BROWSER AGENT (v1.8.0) ====================
+  function agentVisible(el){
+    if(!el) return false;
+    const r=el.getBoundingClientRect();
+    const st=getComputedStyle(el);
+    return r.width>2 && r.height>2 && st.display!=='none' && st.visibility!=='hidden' && Number(st.opacity||1)>0;
+  }
+  function agentText(el){
+    return String(el?.innerText || el?.textContent || el?.getAttribute?.('aria-label') || el?.getAttribute?.('title') || el?.getAttribute?.('placeholder') || '').replace(/\s+/g,' ').trim();
+  }
+  function agentCandidates(selector='button,a,[role="button"],input,div[tabindex],span[tabindex]'){
+    return Array.from(document.querySelectorAll(selector)).filter(agentVisible);
+  }
+  function agentFindByText(words, selector){
+    const wanted=(Array.isArray(words)?words:[words]).map(x=>norm(x)).filter(Boolean);
+    let best=null,bestScore=0;
+    for(const el of agentCandidates(selector)){
+      const t=norm(agentText(el)); if(!t) continue;
+      let score=0;
+      for(const w of wanted){ if(t===w) score=Math.max(score,100); else if(t.startsWith(w)||t.endsWith(w)) score=Math.max(score,80); else if(t.includes(w)) score=Math.max(score,60); }
+      if(score>bestScore){best=el;bestScore=score;}
+    }
+    return best;
+  }
+  function agentClick(el){
+    if(!el) return false;
+    try{ el.scrollIntoView({block:'center',inline:'center'}); }catch(e){}
+    try{ el.dispatchEvent(new MouseEvent('mousedown',{bubbles:true})); el.dispatchEvent(new MouseEvent('mouseup',{bubbles:true})); el.click(); return true; }catch(e){ return false; }
+  }
+  function nativeSet(el,value){
+    try{
+      el.focus();
+      const proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;
+      const setter=Object.getOwnPropertyDescriptor(proto,'value')?.set;
+      if(setter) setter.call(el,value); else el.value=value;
+      el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:value}));
+      el.dispatchEvent(new Event('change',{bubbles:true}));
+      return true;
+    }catch(e){ try{el.value=value;el.dispatchEvent(new Event('input',{bubbles:true}));return true;}catch(_){return false;} }
+  }
+  function fieldScore(el, terms){
+    const txt=nearbyText(el); let score=0;
+    for(const term of terms){ const t=norm(term); if(txt===t) score+=100; else if(txt.includes(t)) score+=30; }
+    if(el.getAttribute('role')==='combobox') score+=8;
+    if(el.type==='search') score+=5;
+    return score;
+  }
+  function findSemanticInput(terms, exclude=[]){
+    let best=null,bestScore=0;
+    for(const el of Array.from(document.querySelectorAll('input:not([type="hidden"]):not([type="password"]),textarea,[contenteditable="true"]')).filter(agentVisible)){
+      const txt=nearbyText(el);
+      if(exclude.some(x=>txt.includes(norm(x)))) continue;
+      const score=fieldScore(el,terms);
+      if(score>bestScore){best=el;bestScore=score;}
+    }
+    return bestScore>=20?best:null;
+  }
+  async function fillAutocomplete(el,value){
+    if(!el||!value) return {ok:false};
+    try{ agentClick(el); if(el.select) el.select(); }catch(e){}
+    nativeSet(el,value);
+    await new Promise(r=>setTimeout(r,700));
+    const v=norm(value);
+    const options=Array.from(document.querySelectorAll('[role="option"],li,[class*="suggest"],[class*="autocomplete"],[class*="dropdown"] [role="button"],[class*="airport"]')).filter(agentVisible);
+    let best=null,score=0;
+    for(const opt of options){
+      const t=norm(agentText(opt)); if(!t) continue;
+      let sc=t===v?100:t.includes(v)?80:(v.split(' ').some(x=>x.length>2&&t.includes(x))?45:0);
+      if(sc>score){best=opt;score=sc;}
+    }
+    if(best){agentClick(best);await new Promise(r=>setTimeout(r,450));return {ok:true,selected:agentText(best)};}
+    el.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',bubbles:true}));
+    el.dispatchEvent(new KeyboardEvent('keyup',{key:'Enter',code:'Enter',bubbles:true}));
+    await new Promise(r=>setTimeout(r,250));
+    return {ok:true,selected:value};
+  }
+  function extractTravelResults(){
+    const candidates=Array.from(document.querySelectorAll('article,li,[class*="flight"],[class*="result"],[class*="itinerary"],[class*="ticket"],[data-testid*="flight"]')).filter(agentVisible);
+    const results=[]; const seen=new Set();
+    for(const el of candidates){
+      const txt=agentText(el); if(txt.length<35||txt.length>1800) continue;
+      if(!/(flight|airline|nonstop|stop|duration|depart|arrival|am|pm|৳|bdt|usd|\$|sar|riyadh|jeddah|dhaka|dac)/i.test(txt)) continue;
+      const price=(txt.match(/(?:৳|BDT|US\$|USD|SAR|\$)\s*[\d,.]+|[\d,.]+\s*(?:BDT|USD|SAR|taka|tk)/i)||[])[0]||'';
+      const key=txt.slice(0,180).toLowerCase(); if(seen.has(key))continue;seen.add(key);
+      const a=el.querySelector('a[href]');
+      results.push({'result type':'flight','title':txt.slice(0,180),'live price':price,'details':txt.slice(0,900),'result url':a?new URL(a.href,location.href).href:location.href});
+      if(results.length>=80)break;
+    }
+    return {ok:true,sourceUrl:location.href,pageTitle:document.title||'',resultCount:results.length,results,extractedAt:new Date().toISOString()};
+  }
+  async function autonomousAgent(intent){
+    const log=[]; const goal=String(intent.transcript||intent.goal||'').trim();
+    const travel=intent.travel||{};
+    const clickTerms=async(terms,label)=>{const el=agentFindByText(terms);if(el){agentClick(el);log.push({action:'click',target:label||agentText(el),status:'done'});await new Promise(r=>setTimeout(r,650));return true;}return false;};
+    // Remove common consent blockers without making assumptions about purchases.
+    await clickTerms(['accept all','accept cookies','agree','allow all'],'cookie consent');
+    if(intent.agentType==='travel' || travel.origin || travel.destination || /\bflights?\b/i.test(goal)){
+      if(/trip\.com/i.test(location.hostname+goal)) await clickTerms(['flights','flight'],'Flights');
+      const origin=travel.origin||''; const destination=travel.destination||'';
+      let from=findSemanticInput(['from','origin','departure airport','leaving from','flying from'],['date','time']);
+      let to=findSemanticInput(['to','destination','arrival airport','going to','flying to'],['date','time']);
+      if(origin&&from){const r=await fillAutocomplete(from,origin);log.push({action:'fill',field:'origin',value:origin,status:r.ok?'done':'failed',selected:r.selected||''});}
+      if(destination&&to){const r=await fillAutocomplete(to,destination);log.push({action:'fill',field:'destination',value:destination,status:r.ok?'done':'failed',selected:r.selected||''});}
+      // If the site already supplies a default travel date and the user did not specify one, preserve it rather than inventing a date.
+      if(travel.departDate){
+        const d=findSemanticInput(['depart','departure date','date']);
+        if(d){nativeSet(d,travel.departDate);log.push({action:'fill',field:'departDate',value:travel.departDate,status:'done'});}
+      }
+      const searchBtn=agentFindByText(['search','search flights','find flights','show flights'], 'button,a,[role="button"],input[type="submit"]');
+      if(searchBtn){agentClick(searchBtn);log.push({action:'click',target:'Search',status:'done'});await new Promise(r=>setTimeout(r,1800));}
+      // SPA searches can update in-place; full navigations are handled by the background worker after this response.
+      const extracted=extractTravelResults();
+      return {...extracted,agent:{goal,steps:log,status:extracted.resultCount?'goal_reached':'attempted',usedExistingDateDefault:!travel.departDate}};
+    }
+    return {ok:false,error:'The autonomous agent could not map this instruction to a supported action plan yet.',sourceUrl:location.href,pageTitle:document.title||'',resultCount:0,results:[],agent:{goal,steps:log,status:'needs_user_action'}};
+  }
+
+
   // Website <-> extension bridge. This lets the APIGarden website use the same
   // real-tab automation engine as the popup whenever the extension is installed.
   document.addEventListener('APIGARDEN_WEB_RUN_VOICE', async (event)=>{
@@ -401,6 +521,10 @@ ${bodyText}`
     if(msg && msg.type === 'APIGARDEN_GET_PAGE_CONTEXT'){
       const ctx = getPageContext();
       sendResponse({ok:true, text:ctx.text, url:ctx.url, title:ctx.title, items:ctx.items});
+      return true;
+    }
+    if(msg && msg.type === 'APIGARDEN_AUTONOMOUS_AGENT'){
+      autonomousAgent(msg.intent || {}).then(sendResponse).catch(error=>sendResponse({ok:false,error:error.message||String(error),sourceUrl:location.href,pageTitle:document.title||'',resultCount:0,results:[]}));
       return true;
     }
     if(msg && msg.type === 'APIGARDEN_VOICE_FILTER_PRODUCTS'){
