@@ -996,6 +996,180 @@ function simulateEndpoint(description, input){
   return `Simulated result for input "${cleanInput}":\nBased on the endpoint's job — "${desc}" — here is the kind of response it would return for that input.\n(This is a local simulation. Connect a real language model on the backend to generate genuinely dynamic answers instead of this template.)`;
 }
 
+
+
+/* ==================== SPEECH-TO-TEXT: ONE-COMMAND API CREATION ==================== */
+let activeVoiceRecognition = null;
+
+function setVoiceApiStatus(role, message, isError=false){
+  const el = document.getElementById(`voice-api-status-${role}`);
+  if(!el) return;
+  el.textContent = message;
+  el.classList.toggle('error', Boolean(isError));
+}
+
+function setVoiceApiListening(role, listening){
+  const btn = document.getElementById(`voice-api-btn-${role}`);
+  if(!btn) return;
+  btn.classList.toggle('listening', Boolean(listening));
+  btn.textContent = listening ? '⏹ Listening…' : '🎤 Create with voice';
+}
+
+function titleCaseWords(value){
+  return String(value || '')
+    .replace(/[^a-zA-Z0-9\s-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 6)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ');
+}
+
+function deriveVoiceApiName(description){
+  const clean = String(description || '')
+    .replace(/^(that|which|to)\s+/i, '')
+    .replace(/\b(for|using|based on|from|with)\b[\s\S]*$/i, '')
+    .replace(/\b(given|when)\b[\s\S]*$/i, '')
+    .trim();
+  const words = clean.split(/\s+/).filter(w => !/^(a|an|the|api|should|can|will|user|users|my|me)$/i.test(w));
+  const stem = titleCaseWords(words.slice(0, 5).join(' ')) || 'Voice Created';
+  return /api$/i.test(stem) ? stem : `${stem} API`;
+}
+
+function parseVoiceApiCommand(transcript){
+  let text = String(transcript || '').trim().replace(/[.!?]+$/,'');
+  text = text.replace(/^(please\s+)?(can you\s+)?/i, '');
+  text = text.replace(/^(create|make|build|generate)\s+(me\s+)?(a|an|the)?\s*api\s*/i, '').trim();
+
+  let exampleInput = '';
+  const exampleMatch = text.match(/(?:,|;)?\s*(?:with\s+)?(?:example input|sample input|test input)\s*(?:is|of|:)?\s*["“]?(.+?)["”]?$/i);
+  if(exampleMatch){
+    exampleInput = exampleMatch[1].trim();
+    text = text.slice(0, exampleMatch.index).trim().replace(/[,;]+$/,'');
+  }
+
+  let name = '';
+  const namedMatch = text.match(/^(?:called|named)\s+["“]?(.+?)["”]?\s+(?:that|which|to)\s+(.+)$/i);
+  if(namedMatch){
+    name = namedMatch[1].trim();
+    text = namedMatch[2].trim();
+  } else {
+    const inlineName = text.match(/(?:^|\s)(?:called|named)\s+["“]?([^,"”]+)["”]?(?:,|\s+that\s+|\s+which\s+|\s+to\s+)(.+)$/i);
+    if(inlineName){
+      name = inlineName[1].trim();
+      text = inlineName[2].trim();
+    }
+  }
+
+  let description = text.replace(/^(that|which|to)\s+/i,'').trim();
+  if(!description) description = transcript.trim();
+  if(!name) name = deriveVoiceApiName(description);
+  if(!exampleInput) exampleInput = transcript.trim();
+
+  return { name: titleCaseWords(name.replace(/\s+api$/i,'')) + ' API', description, exampleInput };
+}
+
+function activateCreateTab(role){
+  const createPanel = document.getElementById(`${role}-panel-create`);
+  if(!createPanel) return;
+  document.querySelectorAll(`#view-${role}-app .tab-btn`).forEach(b=>b.classList.remove('active'));
+  const createBtn = Array.from(document.querySelectorAll(`#view-${role}-app .tab-btn`)).find(b=>/Create New API/i.test(b.textContent));
+  if(createBtn) createBtn.classList.add('active');
+  document.querySelectorAll(`#view-${role}-app .panel`).forEach(p=>p.classList.remove('active'));
+  createPanel.classList.add('active');
+}
+
+async function createApiFromVoiceTranscript(role, transcript){
+  const parsed = parseVoiceApiCommand(transcript);
+  const w = state.wizard[role];
+  w.name = parsed.name || 'Voice Created API';
+  w.description = parsed.description;
+  w.exampleInput = parsed.exampleInput;
+  w.testOutput = null;
+  w.step = 2;
+
+  activateCreateTab(role);
+  renderWizard(role);
+  setVoiceApiStatus(role, `Heard: “${transcript}” — generating and testing…`);
+
+  if(!tryUseCredit(role)){
+    w.step = 1;
+    renderWizard(role);
+    setVoiceApiStatus(role, 'Voice command understood, but no free runs remain.', true);
+    return;
+  }
+
+  const targetId = `wiz-test-result-${role}`;
+  const target = document.getElementById(targetId);
+  if(target) target.innerHTML = `<div class="loading-box"><span class="spinner"></span>Creating your API from the voice command...</div>`;
+
+  try{
+    w.testOutput = await runGeneratedApi(w.description, w.exampleInput);
+    renderWizardStep(role);
+    wizardSave(role);
+    setVoiceApiStatus(role, `Created: ${w.name} ✓`);
+    showToast(`Voice command created ${w.name}`);
+  }catch(err){
+    w.testOutput = null;
+    renderWizardStep(role);
+    const currentTarget = document.getElementById(targetId);
+    if(currentTarget) setError(targetId, err);
+    setVoiceApiStatus(role, `Could not create API: ${err.message || err}`, true);
+  }
+}
+
+function startVoiceApiCreation(role){
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SpeechRecognition){
+    setVoiceApiStatus(role, 'Speech recognition is not supported in this browser. Use Chrome or Edge.', true);
+    showToast('Voice creation needs a browser with Web Speech Recognition support');
+    return;
+  }
+
+  if(activeVoiceRecognition){
+    try{ activeVoiceRecognition.stop(); }catch(e){}
+    activeVoiceRecognition = null;
+  }
+
+  const recognition = new SpeechRecognition();
+  activeVoiceRecognition = recognition;
+  recognition.lang = 'en-US';
+  recognition.continuous = false;
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+
+  recognition.onstart = ()=>{
+    setVoiceApiListening(role, true);
+    setVoiceApiStatus(role, 'Listening… say the full API request in one sentence.');
+  };
+  recognition.onresult = async (event)=>{
+    const transcript = event.results?.[0]?.[0]?.transcript?.trim() || '';
+    if(!transcript){
+      setVoiceApiStatus(role, 'I did not hear a command. Try again.', true);
+      return;
+    }
+    setVoiceApiListening(role, false);
+    await createApiFromVoiceTranscript(role, transcript);
+  };
+  recognition.onerror = (event)=>{
+    const reason = event.error === 'not-allowed' ? 'Microphone permission was denied.' : `Speech recognition error: ${event.error || 'unknown error'}`;
+    setVoiceApiListening(role, false);
+    setVoiceApiStatus(role, reason, true);
+  };
+  recognition.onend = ()=>{
+    setVoiceApiListening(role, false);
+    if(activeVoiceRecognition === recognition) activeVoiceRecognition = null;
+  };
+
+  try{ recognition.start(); }
+  catch(err){
+    setVoiceApiListening(role, false);
+    setVoiceApiStatus(role, err.message || 'Could not start speech recognition.', true);
+  }
+}
+
 /* ==================== CREATE NEW API (locally simulated demo — no AI key needed) ==================== */
 function renderWizard(role){
   const w = state.wizard[role];
