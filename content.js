@@ -365,6 +365,29 @@ ${bodyText}`
     };
   }
 
+
+
+  // Website <-> extension bridge. This lets the APIGarden website use the same
+  // real-tab automation engine as the popup whenever the extension is installed.
+  document.addEventListener('APIGARDEN_WEB_RUN_VOICE', async (event)=>{
+    try{
+      let payload={};
+      try{ payload=JSON.parse(document.documentElement.getAttribute('data-apigarden-web-voice-request') || '{}'); }
+      catch(e){ payload=event.detail || {}; }
+      const response=await chrome.runtime.sendMessage({
+        type:'APIGARDEN_RUN_VOICE_API',
+        intent:payload.intent || {},
+        runKind:'web',
+        runId:payload.runId || payload.intent?.id || ''
+      });
+      document.documentElement.setAttribute('data-apigarden-web-voice-result',JSON.stringify(response || {ok:false,error:'No response'}));
+      document.dispatchEvent(new CustomEvent('APIGARDEN_WEB_RUN_VOICE_RESULT'));
+    }catch(error){
+      document.documentElement.setAttribute('data-apigarden-web-voice-result',JSON.stringify({ok:false,error:error.message || String(error)}));
+      document.dispatchEvent(new CustomEvent('APIGARDEN_WEB_RUN_VOICE_RESULT'));
+    }
+  });
+
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse)=>{
     if(msg && msg.type === 'APIGARDEN_PING'){
       sendResponse({ok:true});

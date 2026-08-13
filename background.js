@@ -11,11 +11,32 @@ function waitForTabComplete(tabId, timeoutMs=20000){
     chrome.tabs.get(tabId).then(tab=>{ if(tab.status==='complete') finish(true); }).catch(()=>{});
   });
 }
+
+async function ensureContentScript(tabId){
+  try{ const pong=await chrome.tabs.sendMessage(tabId,{type:'APIGARDEN_PING'}); if(pong?.ok) return true; }catch(e){}
+  try{
+    await chrome.scripting.executeScript({target:{tabId},files:['content.js']});
+    await new Promise(r=>setTimeout(r,350));
+    const pong=await chrome.tabs.sendMessage(tabId,{type:'APIGARDEN_PING'});
+    return !!pong?.ok;
+  }catch(e){ return false; }
+}
+async function sendWithRetry(tabId,message,{tries=5,delay=900}={}){
+  let lastError;
+  for(let i=0;i<tries;i++){
+    try{
+      await ensureContentScript(tabId);
+      return await chrome.tabs.sendMessage(tabId,message);
+    }catch(e){ lastError=e; await new Promise(r=>setTimeout(r,delay)); }
+  }
+  throw lastError || new Error('Could not communicate with the website tab.');
+}
+
 async function extractProductsFromTab(tabId){
   await waitForTabComplete(tabId);
   await new Promise(r=>setTimeout(r,1800));
   try{
-    return await chrome.tabs.sendMessage(tabId,{type:'APIGARDEN_EXTRACT_PRODUCTS'});
+    return await sendWithRetry(tabId,{type:'APIGARDEN_EXTRACT_PRODUCTS'},{tries:5,delay:900});
   }catch(error){
     return {ok:false,error:error.message || String(error),results:[]};
   }
@@ -143,13 +164,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse)=>{
       await new Promise(r=>setTimeout(r,2200));
       let extraction;
       try{
-        extraction = await chrome.tabs.sendMessage(tab.id,{
+        extraction = await sendWithRetry(tab.id,{
           type:'APIGARDEN_VOICE_FILTER_PRODUCTS',
           query:intent.query || '',
           minPrice:intent.minPrice ?? null,
           maxPrice:intent.maxPrice ?? null,
           siteLabel:intent.siteLabel || intent.domain || ''
-        });
+        },{tries:7,delay:1000});
       }catch(error){
         extraction = await extractProductsFromTab(tab.id);
       }

@@ -485,6 +485,17 @@ const VOICE_SITES = {
   pickaboo: {label:'Pickaboo', base:'https://www.pickaboo.com', search:'https://www.pickaboo.com/search?q={query}'},
   rokomari: {label:'Rokomari', base:'https://www.rokomari.com', search:'https://www.rokomari.com/search?term={query}'}
 };
+function chooseBestVoiceSite(text){
+  const t=String(text||'').toLowerCase();
+  const rules=[
+    {rx:/\b(shoe|shoes|sneaker|sneakers|sandal|sandals|loafer|loafers|boot|boots|footwear)\b/, key:'bata'},
+    {rx:/\b(book|books|novel|textbook|stationery|author)\b/, key:'rokomari'},
+    {rx:/\b(phone|mobile|smartphone|laptop|tablet|headphone|earphone|camera|smartwatch|gadget)\b/, key:'pickaboo'},
+    {rx:/\b(fridge|refrigerator|freezer|television|tv|ac|air conditioner|washing machine|water heater|home appliance)\b/, key:'walton'}
+  ];
+  const found=rules.find(r=>r.rx.test(t));
+  return {...VOICE_SITES[found?.key || 'daraz'], key:found?.key || 'daraz', autoSelected:true};
+}
 
 function voiceView(){
   const v = state.voice || {listening:false,transcript:'',draft:null,lastError:''};
@@ -590,8 +601,9 @@ function detectVoiceQuery(text, site, prices){
 function parseVoiceIntent(raw){
   const transcript=normalizeVoiceText(raw);
   if(!transcript) throw new Error('Please record or type a voice command first.');
-  const site=detectVoiceSite(transcript);
-  if(!site) throw new Error('I could not detect a website name. Say something like “Go to Bata website and create an API for shoes from 0 to 3000 taka.”');
+  let site=detectVoiceSite(transcript);
+  const askedAny=/\b(any website|any site|best website|best site|choose (?:a|the) website|choose (?:a|the) site|from anywhere)\b/i.test(transcript);
+  if(!site || askedAny) site=chooseBestVoiceSite(transcript);
   const prices=detectVoicePrices(transcript);
   const query=detectVoiceQuery(transcript,site,prices);
   const targetUrl=site.search.replace('{query}',encodeURIComponent(query));
@@ -601,7 +613,7 @@ function parseVoiceIntent(raw){
     id:`voice-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
     name: cleanName.length>90 ? `${site.label} ${query} API` : cleanName,
     description:`Voice-created website API that searches ${site.label} for ${query}${range?` in the ${range} price range`:''}, then captures live visible product data.`,
-    transcript,siteKey:site.key,siteLabel:site.label,domain:site.domain,baseUrl:site.base,
+    transcript,siteKey:site.key,siteLabel:site.label,domain:site.domain,baseUrl:site.base,autoSelectedSite:!!site.autoSelected,
     query,minPrice:prices.minPrice,maxPrice:prices.maxPrice,targetUrl,createdAt:new Date().toISOString(),type:'voice'
   };
 }
