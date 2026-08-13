@@ -3,6 +3,7 @@ const $ = (id) => document.getElementById(id);
 const STORE_KEY = 'apigarden_extension_store_v1';
 const DEFAULT_BACKEND_URL = 'https://api-garden.onrender.com';
 const ISHITA = 'ishita.chowdhury@northsouth.edu';
+const VOICE_RESULT_KEY = 'apigarden_voice_run_v1';
 
 const defaultApis = [
   {name:'Currency Converter', description:'Convert currencies and explain the result clearly.', runs:0},
@@ -18,7 +19,8 @@ let state = {
   email:'',
   tab:'info',
   store:null,
-  recording:null
+  recording:null,
+  voice:{listening:false,manualStop:false,transcript:'',draft:null,lastError:''}
 };
 
 function clean(text){
@@ -74,6 +76,7 @@ function storageGet(){
         backendUrl: DEFAULT_BACKEND_URL,
         session:null,
         users:{},
+        voiceDrafts:{},
         admin:{pending:[], approved:[]}
       });
     });
@@ -181,8 +184,36 @@ function freshUser(role,email){
     password:''
   };
 }
+async function refreshVoiceBackgroundResult(){
+  try{
+    const data=await chrome.storage.local.get([VOICE_RESULT_KEY]);
+    const run=data[VOICE_RESULT_KEY];
+    if(!run?.finishedAt) return;
+    state.store.voiceDrafts=state.store.voiceDrafts || {};
+    if(run.kind==='draft'){
+      const draft=state.store.voiceDrafts[key(state.role,state.email)];
+      if(draft && draft.id===run.id){
+        draft.lastOutcome=run.lastOutcome;
+        draft.finalUrl=run.lastOutcome?.sourceUrl || draft.targetUrl;
+        state.store.voiceDrafts[key(state.role,state.email)]=draft;
+        state.voice.draft=draft;
+      }
+    }else if(run.kind==='saved'){
+      const u=currentUser();
+      const api=(u?.apis||[]).find(a=>a.id===run.id);
+      if(api){
+        api.lastOutcome=run.lastOutcome;
+        api.finalUrl=run.lastOutcome?.sourceUrl || api.finalUrl;
+        api.runs=(api.runs||0)+1;
+      }
+    }
+    await save();
+    await chrome.storage.local.remove([VOICE_RESULT_KEY]);
+  }catch(e){}
+}
 async function load(){
   state.store = await storageGet();
+  state.store.voiceDrafts = state.store.voiceDrafts || {};
   if(!state.store.backendUrl) state.store.backendUrl = DEFAULT_BACKEND_URL;
   if(state.store.session && state.store.session.role && state.store.session.email){
     state.role = state.store.session.role;
@@ -193,6 +224,8 @@ async function load(){
     else await syncExtensionProfileFromCloud();
   }
   await refreshRecordingStatus(false);
+  if(state.role && state.email && state.role!=='admin') state.voice.draft = state.store.voiceDrafts?.[key(state.role,state.email)] || null;
+  if(state.role && state.email && state.role!=='admin') await refreshVoiceBackgroundResult();
   render();
 }
 async function save(){
@@ -289,6 +322,7 @@ function tabs(){
     ['analyzer','Analyzer'],
     ['messages','Messages'],
     ['recording','Recorder'],
+    ['voice','Voice API'],
     ['apis','My APIs']
   ];
   if(state.role === 'free') items.push(['upgrade','Upgrade']);
@@ -301,6 +335,7 @@ function renderApp(){
     state.tab === 'analyzer' ? analyzerView() :
     state.tab === 'messages' ? messagesView() :
     state.tab === 'recording' ? recordingView() :
+    state.tab === 'voice' ? voiceView() :
     state.tab === 'apis' ? apisView() :
     upgradeView()
   );
@@ -439,6 +474,248 @@ function messagesView(){
   </div>`;
 }
 
+
+let voiceRecognition = null;
+let voiceFinalTranscript = '';
+
+const VOICE_SITES = {
+  bata: {label:'Bata Bangladesh', base:'https://www.batabd.com', search:'https://www.batabd.com/search?q={query}&type=product'},
+  walton: {label:'Walton', base:'https://waltonbd.com', search:'https://waltonbd.com/index.php?route=product/search&search={query}&description=true'},
+  daraz: {label:'Daraz Bangladesh', base:'https://www.daraz.com.bd', search:'https://www.daraz.com.bd/catalog/?q={query}'},
+  pickaboo: {label:'Pickaboo', base:'https://www.pickaboo.com', search:'https://www.pickaboo.com/search?q={query}'},
+  rokomari: {label:'Rokomari', base:'https://www.rokomari.com', search:'https://www.rokomari.com/search?term={query}'}
+};
+
+function voiceView(){
+  const v = state.voice || {listening:false,transcript:'',draft:null,lastError:''};
+  const d = v.draft;
+  return `<div class="card voice-card">
+    <div class="voice-head"><div><h2>Create API by Voice</h2><p>Speak naturally. Your words appear below while you talk, and recording continues until you press Stop Recording.</p></div><span class="voice-status ${v.listening?'live':''}">${v.listening?'Listening':'Ready'}</span></div>
+    <button class="voice-mic ${v.listening?'active':''}" data-action="${v.listening?'stopVoice':'startVoice'}" aria-label="${v.listening?'Stop recording':'Start voice recording'}"><span class="voice-mic-icon">🎙</span></button>
+    <div class="voice-wave ${v.listening?'active':''}"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="actions voice-actions">
+      ${v.listening?`<button class="btn danger" data-action="stopVoice">■ Stop Recording</button>`:`<button class="btn primary" data-action="startVoice">🎙 Start Recording</button>`}
+      ${v.transcript?`<button class="btn soft" data-action="clearVoice">Clear</button>`:''}
+    </div>
+    <label>Live transcript — you can edit it before creating the API</label>
+    <textarea id="voice-transcript" rows="5" placeholder="Example: Go to Bata website and create an API for shoes from 0 to 3000 taka.">${esc(v.transcript || '')}</textarea>
+    ${v.lastError?`<div class="voice-error">${esc(v.lastError)}</div>`:''}
+    <div class="actions"><button class="btn primary" data-action="analyzeVoice" ${v.listening?'disabled':''}>Analyze & Create API</button></div>
+  </div>
+  ${d ? voiceDraftView(d) : ''}`;
+}
+
+function voiceDraftView(d){
+  const ran = !!d.lastOutcome;
+  return `<div class="card voice-draft">
+    <div class="voice-draft-top"><div><span class="badge">VOICE DRAFT</span><h2>${esc(d.name)}</h2></div><span class="status-chip">${ran?'Tested':'Ready to test'}</span></div>
+    <p>${esc(d.description)}</p>
+    <div class="intent-grid">
+      <div><span>Website</span><b>${esc(d.siteLabel || d.domain || 'Detected website')}</b></div>
+      <div><span>Search</span><b>${esc(d.query || 'All products')}</b></div>
+      <div><span>Price range</span><b>${d.minPrice!=null || d.maxPrice!=null ? `৳ ${Number(d.minPrice||0).toLocaleString()} – ${d.maxPrice!=null?`৳ ${Number(d.maxPrice).toLocaleString()}`:'No max'}` : 'Not specified'}</b></div>
+    </div>
+    <div class="record-url">${esc(d.targetUrl)}</div>
+    <div class="actions">
+      <button class="btn primary" data-action="runVoiceDraft">▶ Run API</button>
+      ${ran?`<button class="btn soft" data-action="saveVoiceDraft">Save API</button><button class="btn soft" data-action="downloadVoiceDraft">Download JSON</button>`:''}
+    </div>
+    ${ran?`<div class="voice-run-summary"><b>${Number(d.lastOutcome.resultCount||0)}</b> matching live product${Number(d.lastOutcome.resultCount||0)===1?'':'s'} captured from the opened page.</div>`:`<p class="small">Run it first. APIGarden will open the detected website, search the product, apply the spoken price range on the page, and capture the visible product data. Save only after you confirm it works.</p>`}
+  </div>`;
+}
+
+function normalizeVoiceText(value){
+  return String(value || '').replace(/\s+/g,' ').trim();
+}
+function priceNumber(value){
+  const n = Number(String(value||'').replace(/,/g,''));
+  return Number.isFinite(n) ? n : null;
+}
+function detectVoicePrices(text){
+  const t = text.toLowerCase().replace(/,/g,'');
+  let minPrice=null, maxPrice=null;
+  let m=t.match(/(?:range|price(?:\s+range)?|from)?\s*(\d+(?:\.\d+)?)\s*(?:-|–|—|to|and)\s*(\d+(?:\.\d+)?)\s*(?:tk|taka|bdt)?\b/i);
+  if(m){ minPrice=priceNumber(m[1]); maxPrice=priceNumber(m[2]); }
+  if(maxPrice==null){
+    m=t.match(/(?:under|below|less than|up to|maximum|max)\s*(?:tk|taka|bdt)?\s*(\d+(?:\.\d+)?)/i) || t.match(/(?:tk|taka|bdt)\s*(\d+(?:\.\d+)?)\s*(?:or less|maximum|max)/i);
+    if(m){ minPrice=0; maxPrice=priceNumber(m[1]); }
+  }
+  if(minPrice==null){
+    m=t.match(/(?:above|over|more than|minimum|min)\s*(?:tk|taka|bdt)?\s*(\d+(?:\.\d+)?)/i);
+    if(m) minPrice=priceNumber(m[1]);
+  }
+  return {minPrice,maxPrice};
+}
+function detectVoiceSite(text){
+  const lower=text.toLowerCase();
+  for(const [key,site] of Object.entries(VOICE_SITES)){
+    if(new RegExp(`\\b${key}\\b`,'i').test(lower)) return {...site,key,domain:new URL(site.base).hostname};
+  }
+  const urlMatch=text.match(/(?:https?:\/\/)?(?:www\.)?([a-z0-9-]+(?:\.[a-z0-9-]+)+)(?:\/[^\s]*)?/i);
+  if(urlMatch){
+    const domain=urlMatch[1].toLowerCase();
+    const base=`https://${domain}`;
+    return {key:domain.split('.')[0],label:domain,base,domain,search:`${base}/search?q={query}`};
+  }
+  const named=text.match(/(?:go to|open|from|on|visit)\s+(?:the\s+)?([a-z0-9&' -]{2,40}?)\s+(?:website|site)\b/i) || text.match(/\b([a-z0-9&'-]{2,30})\s+(?:website|site)\b/i);
+  if(named){
+    const key=named[1].toLowerCase().replace(/\b(the|official)\b/g,'').trim().replace(/[^a-z0-9]/g,'');
+    if(key){
+      const base=`https://www.${key}.com`;
+      return {key,label:named[1].trim(),base,domain:`www.${key}.com`,search:`${base}/search?q={query}`};
+    }
+  }
+  return null;
+}
+function detectVoiceQuery(text, site, prices){
+  let q=text;
+  q=q.replace(/https?:\/\/\S+/ig,' ');
+  q=q.replace(/\b(?:go to|open|visit|search|find|show me|create|make|build|generate|an|a|the|api|website|site|please|for me)\b/ig,' ');
+  if(site){
+    q=q.replace(new RegExp(site.key.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'ig'),' ');
+    q=q.replace(new RegExp(String(site.label||'').replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'ig'),' ');
+  }
+  q=q.replace(/\b(?:price|range|priced|cost|between|from|under|below|above|over|less than|more than|up to|maximum|max|minimum|min)\b/ig,' ');
+  q=q.replace(/\b\d[\d,]*(?:\.\d+)?\s*(?:tk|taka|bdt)?\b/ig,' ');
+  q=q.replace(/[–—-]+/g,' ');
+  q=normalizeVoiceText(q).replace(/^and\s+/i,'').replace(/\s+and$/i,'');
+  const forMatch=text.match(/(?:api\s+)?for\s+(.+?)(?=\s+(?:range|price|from|under|below|above|over|between|up to)\b|\s+\d[\d,]*\s*(?:-|to)\s*\d|$)/i);
+  if(forMatch){
+    let f=forMatch[1].replace(/\b(?:shoe price|price)\b/ig,'shoe').trim();
+    f=f.replace(/\b(?:on|from)\s+\w+\s+(?:website|site)\b/ig,'').trim();
+    if(f && f.length<80) q=f;
+  }
+  return q || 'products';
+}
+function parseVoiceIntent(raw){
+  const transcript=normalizeVoiceText(raw);
+  if(!transcript) throw new Error('Please record or type a voice command first.');
+  const site=detectVoiceSite(transcript);
+  if(!site) throw new Error('I could not detect a website name. Say something like “Go to Bata website and create an API for shoes from 0 to 3000 taka.”');
+  const prices=detectVoicePrices(transcript);
+  const query=detectVoiceQuery(transcript,site,prices);
+  const targetUrl=site.search.replace('{query}',encodeURIComponent(query));
+  const range = prices.maxPrice!=null ? `৳${Number(prices.minPrice||0).toLocaleString()}–৳${Number(prices.maxPrice).toLocaleString()}` : prices.minPrice!=null ? `above ৳${Number(prices.minPrice).toLocaleString()}` : '';
+  const cleanName=`${site.label} ${query}${range?' '+range:''} API`.replace(/\s+/g,' ').trim();
+  return {
+    id:`voice-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
+    name: cleanName.length>90 ? `${site.label} ${query} API` : cleanName,
+    description:`Voice-created website API that searches ${site.label} for ${query}${range?` in the ${range} price range`:''}, then captures live visible product data.`,
+    transcript,siteKey:site.key,siteLabel:site.label,domain:site.domain,baseUrl:site.base,
+    query,minPrice:prices.minPrice,maxPrice:prices.maxPrice,targetUrl,createdAt:new Date().toISOString(),type:'voice'
+  };
+}
+function updateVoiceTranscriptDisplay(){
+  const area=$('voice-transcript');
+  if(area && document.activeElement!==area) area.value=state.voice.transcript || '';
+}
+async function ensureMicPermission(){
+  if(!navigator.mediaDevices?.getUserMedia) return;
+  const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+  stream.getTracks().forEach(t=>t.stop());
+}
+async function startVoice(){
+  const SpeechRecognition=window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SpeechRecognition){
+    state.voice.lastError='Voice recognition is not available in this Chrome build. You can still type the command in the transcript box.';
+    render(); return;
+  }
+  try{ await ensureMicPermission(); }catch(e){
+    state.voice.lastError='Microphone permission is required. Allow microphone access for APIGarden and try again.'; render(); return;
+  }
+  if(voiceRecognition){ try{ voiceRecognition.abort(); }catch(e){} }
+  voiceFinalTranscript=state.voice.transcript ? `${state.voice.transcript.trim()} ` : '';
+  state.voice.manualStop=false; state.voice.listening=true; state.voice.lastError=''; state.voice.draft=null;
+  const rec=new SpeechRecognition();
+  voiceRecognition=rec;
+  rec.continuous=true; rec.interimResults=true; rec.lang='en-US';
+  rec.onresult=(event)=>{
+    let interim='';
+    for(let i=event.resultIndex;i<event.results.length;i++){
+      const piece=event.results[i][0]?.transcript || '';
+      if(event.results[i].isFinal) voiceFinalTranscript += piece + ' ';
+      else interim += piece;
+    }
+    state.voice.transcript=normalizeVoiceText(voiceFinalTranscript + interim);
+    updateVoiceTranscriptDisplay();
+  };
+  rec.onerror=(event)=>{
+    if(event.error==='aborted' && state.voice.manualStop) return;
+    state.voice.lastError=`Voice recognition: ${event.error || 'unknown error'}`;
+    if(['not-allowed','service-not-allowed'].includes(event.error)) state.voice.manualStop=true;
+  };
+  rec.onend=()=>{
+    if(state.voice.listening && !state.voice.manualStop){
+      setTimeout(()=>{ try{ rec.start(); }catch(e){} },180);
+    }else{
+      state.voice.listening=false;
+      voiceRecognition=null;
+      render();
+    }
+  };
+  rec.start(); render();
+}
+function stopVoice(){
+  state.voice.manualStop=true; state.voice.listening=false;
+  const area=$('voice-transcript'); if(area) state.voice.transcript=normalizeVoiceText(area.value);
+  if(voiceRecognition){ try{ voiceRecognition.stop(); }catch(e){} }
+  voiceRecognition=null; render();
+}
+function clearVoice(){
+  if(state.voice.listening) stopVoice();
+  state.voice={listening:false,manualStop:false,transcript:'',draft:null,lastError:''};
+  if(state.store?.voiceDrafts && state.role && state.email){ delete state.store.voiceDrafts[key(state.role,state.email)]; save(); }
+  voiceFinalTranscript=''; render();
+}
+async function analyzeVoice(){
+  const area=$('voice-transcript');
+  if(area) state.voice.transcript=normalizeVoiceText(area.value);
+  try{
+    state.voice.draft=parseVoiceIntent(state.voice.transcript);
+    state.store.voiceDrafts=state.store.voiceDrafts||{};
+    state.store.voiceDrafts[key(state.role,state.email)]=state.voice.draft;
+    await save();
+    state.voice.lastError=''; toast('Voice command analyzed. API draft is ready to run.');
+  }catch(e){ state.voice.lastError=e.message || String(e); }
+  render();
+}
+async function runVoiceDraft(){
+  const d=state.voice.draft; if(!d) return;
+  state.store.voiceDrafts=state.store.voiceDrafts||{}; state.store.voiceDrafts[key(state.role,state.email)]=d; await save();
+  toast(`Opening ${d.siteLabel}…`);
+  const res=await chrome.runtime.sendMessage({type:'APIGARDEN_RUN_VOICE_API',intent:d,runKind:'draft',runId:d.id});
+  if(!res?.ok){ state.voice.lastError=res?.error || 'Could not run voice API'; render(); return; }
+  const extracted=res.extraction?.ok?res.extraction:{results:[],resultCount:0,sourceUrl:res.url||d.targetUrl,pageTitle:''};
+  d.lastOutcome={
+    apiName:d.name, description:d.description, query:d.query, status:'success', sourceUrl:extracted.sourceUrl||res.url||d.targetUrl,
+    pageTitle:extracted.pageTitle||'', resultCount:extracted.resultCount||0, results:extracted.results||[],
+    filters:{minPrice:d.minPrice,maxPrice:d.maxPrice,currency:'BDT'}, voice:{transcript:d.transcript,website:d.siteLabel},
+    generatedAt:new Date().toISOString(), note:extracted.resultCount?'Live visible product data extracted after the voice search and price filter were applied.':'The website opened and the filter ran, but no matching visible product cards were detected.'
+  };
+  d.finalUrl=d.lastOutcome.sourceUrl;
+  state.voice.draft=d; state.store.voiceDrafts[key(state.role,state.email)]=d; await save(); await chrome.storage.local.remove([VOICE_RESULT_KEY]); toast(extracted.resultCount?`${extracted.resultCount} matching live products found`:'Website opened; no matching product cards detected'); render();
+}
+async function saveVoiceDraft(){
+  const d=state.voice.draft; if(!d?.lastOutcome){ toast('Run the API first'); return; }
+  const u=currentUser(); u.apis=u.apis||[];
+  u.apis.unshift({id:d.id,name:d.name,description:d.description,runs:1,type:'voice',finalUrl:d.finalUrl||d.targetUrl,voiceIntent:{...d,lastOutcome:undefined},lastOutcome:d.lastOutcome});
+  state.store.users[key(state.role,state.email)]=u; delete state.store.voiceDrafts?.[key(state.role,state.email)]; state.voice.draft=null; await save(); state.tab='apis'; await saveSession(); toast('Voice API saved to My APIs'); render();
+}
+function downloadVoiceDraft(){
+  const d=state.voice.draft; if(!d?.lastOutcome) return;
+  downloadJsonFile(d.lastOutcome,`${safeFileName(d.name)}-outcome.json`);
+}
+async function runVoiceApi(index){
+  const u=currentUser(); const api=u.apis?.[index]; if(!api || api.type!=='voice') return;
+  const intent={...(api.voiceIntent||{}),name:api.name,description:api.description,targetUrl:api.finalUrl||api.voiceIntent?.targetUrl};
+  const res=await chrome.runtime.sendMessage({type:'APIGARDEN_RUN_VOICE_API',intent,runKind:'saved',runId:api.id});
+  if(!res?.ok){ toast(res?.error||'Could not run voice API'); return; }
+  const ex=res.extraction?.ok?res.extraction:{results:[],resultCount:0};
+  api.runs=(api.runs||0)+1; api.finalUrl=ex.sourceUrl||res.url||api.finalUrl;
+  api.lastOutcome={apiName:api.name,description:api.description,query:intent.query||'',status:'success',sourceUrl:api.finalUrl,pageTitle:ex.pageTitle||'',resultCount:ex.resultCount||0,results:ex.results||[],filters:{minPrice:intent.minPrice??null,maxPrice:intent.maxPrice??null,currency:'BDT'},voice:{transcript:intent.transcript||'',website:intent.siteLabel||intent.domain||''},generatedAt:new Date().toISOString(),note:ex.resultCount?'Live visible product data extracted after the saved voice API ran.':'The website opened, but no matching visible product cards were detected.'};
+  await save(); await chrome.storage.local.remove([VOICE_RESULT_KEY]); toast(ex.resultCount?`${ex.resultCount} matching live products captured`:'Page opened; no matching products detected'); render();
+}
+
 function recordingView(){
   const rec = state.recording || {isRecording:false,steps:[],finalUrl:''};
   const count = Array.isArray(rec.steps) ? rec.steps.length : 0;
@@ -558,13 +835,9 @@ function apisView(){
   return `<div class="card">
     <h2>My APIs</h2>
     <p class="small">Deleting an API removes it from your list. It does not restore used run count.</p>
-    ${(u.apis || []).length ? u.apis.map((a,i)=>`<div class="api-row"><div><b>${esc(a.name)}</b><p>${esc(a.description)}</p><p class="small">${a.runs || 0} runs${a.type==='recorded'?' · Recorded automation':''}</p></div><div class="api-actions">${a.type==='recorded'?`<button class="btn primary" data-action="runRecordedApi" data-index="${i}">Run API</button>`:''}<button class="btn soft" data-action="downloadApiJson" data-index="${i}">Download JSON</button><button class="btn danger" data-action="deleteApi" data-index="${i}">Delete</button></div></div>`).join('') : `<p>No APIs yet.</p>`}
+    ${(u.apis || []).length ? u.apis.map((a,i)=>`<div class="api-row"><div><b>${esc(a.name)}</b><p>${esc(a.description)}</p><p class="small">${a.runs || 0} runs${a.type==='recorded'?' · Recorded automation':a.type==='voice'?' · Voice website API':''}</p></div><div class="api-actions">${a.type==='recorded'?`<button class="btn primary" data-action="runRecordedApi" data-index="${i}">Run API</button>`:a.type==='voice'?`<button class="btn primary" data-action="runVoiceApi" data-index="${i}">Run API</button>`:''}<button class="btn soft" data-action="downloadApiJson" data-index="${i}">Download JSON</button><button class="btn danger" data-action="deleteApi" data-index="${i}">Delete</button></div></div>`).join('') : `<p>No APIs yet.</p>`}
     <hr>
     <h3>Create quick API</h3>
-    <div class="voice-quick">
-      <button class="btn soft" id="voice-quick-btn" data-action="voiceQuickApi">🎤 Create with one voice command</button>
-      <p class="small" id="voice-quick-status">Say: “Create an API that recommends Walton refrigerators based on budget.”</p>
-    </div>
     <label>API name</label><input id="api-name" placeholder="Hotel chooser API">
     <label>Description</label><textarea id="api-desc" rows="3" placeholder="This API recommends the best option from a page based on user needs."></textarea>
     <div class="actions"><button class="btn primary" data-action="addApi">Save API</button></div>
@@ -881,47 +1154,6 @@ async function reject(index){
   toast('Rejected and message sent');
   render();
 }
-
-
-function parseExtensionVoiceCommand(transcript){
-  let text = String(transcript || '').trim().replace(/[.!?]+$/,'');
-  text = text.replace(/^(please\s+)?(can you\s+)?/i,'');
-  text = text.replace(/^(create|make|build|generate)\s+(me\s+)?(a|an|the)?\s*api\s*/i,'').trim();
-  let name='';
-  const match=text.match(/^(?:called|named)\s+["“]?(.+?)["”]?\s+(?:that|which|to)\s+(.+)$/i);
-  if(match){ name=match[1].trim(); text=match[2].trim(); }
-  const description=text.replace(/^(that|which|to)\s+/i,'').trim() || transcript.trim();
-  if(!name){
-    const stem=description.replace(/\b(for|using|based on|from|with)\b[\s\S]*$/i,'').split(/\s+/).filter(w=>!/^(a|an|the|api|should|can|will|user|users|my|me)$/i.test(w)).slice(0,5).join(' ');
-    name=(stem || 'Voice Created').replace(/[^a-zA-Z0-9\s-]/g,' ').replace(/\s+/g,' ').trim().split(' ').map(w=>w.charAt(0).toUpperCase()+w.slice(1).toLowerCase()).join(' ')+' API';
-  } else if(!/api$/i.test(name)) name += ' API';
-  return {name, description};
-}
-
-async function voiceQuickApi(){
-  const Recognition=window.SpeechRecognition || window.webkitSpeechRecognition;
-  const status=$('voice-quick-status');
-  const button=$('voice-quick-btn');
-  if(!Recognition){ if(status) status.textContent='Speech recognition is unavailable here. Try the website in Chrome or Edge.'; toast('Speech recognition is not supported'); return; }
-  const recognition=new Recognition();
-  recognition.lang='en-US'; recognition.continuous=false; recognition.interimResults=false; recognition.maxAlternatives=1;
-  recognition.onstart=()=>{ if(button) button.textContent='⏹ Listening…'; if(status) status.textContent='Listening for one complete API command…'; };
-  recognition.onerror=(event)=>{ if(button) button.textContent='🎤 Create with one voice command'; if(status) status.textContent=event.error==='not-allowed'?'Microphone permission was denied.':`Speech error: ${event.error}`; };
-  recognition.onend=()=>{ if(button) button.textContent='🎤 Create with one voice command'; };
-  recognition.onresult=async(event)=>{
-    const transcript=event.results?.[0]?.[0]?.transcript?.trim() || '';
-    if(!transcript){ if(status) status.textContent='No command heard. Try again.'; return; }
-    const parsed=parseExtensionVoiceCommand(transcript);
-    const u=currentUser();
-    u.apis.unshift({name:parsed.name,description:parsed.description,runs:0,createdBy:'voice'});
-    state.store.users[key(state.role,state.email)] = u;
-    await save();
-    toast(`Voice API created: ${parsed.name}`);
-    render();
-  };
-  try{ recognition.start(); }catch(e){ if(status) status.textContent=e.message || 'Could not start speech recognition.'; }
-}
-
 async function addApi(){
   const name = $('api-name').value.trim();
   const description = $('api-desc').value.trim();
@@ -966,13 +1198,20 @@ document.addEventListener('click', async (e)=>{
   if(action === 'startRecording'){ startRecording(); }
   if(action === 'stopRecording'){ stopRecording(); }
   if(action === 'discardRecording'){ discardRecording(); }
+  if(action === 'startVoice'){ startVoice(); }
+  if(action === 'stopVoice'){ stopVoice(); }
+  if(action === 'clearVoice'){ clearVoice(); }
+  if(action === 'analyzeVoice'){ analyzeVoice(); }
+  if(action === 'runVoiceDraft'){ runVoiceDraft(); }
+  if(action === 'saveVoiceDraft'){ saveVoiceDraft(); }
+  if(action === 'downloadVoiceDraft'){ downloadVoiceDraft(); }
+  if(action === 'runVoiceApi'){ runVoiceApi(Number(btn.dataset.index)); }
   if(action === 'runRecordedApi'){ runRecordedApi(Number(btn.dataset.index)); }
   if(action === 'downloadApiJson'){ downloadApiJson(Number(btn.dataset.index)); }
   if(action === 'requestUpgrade'){ requestUpgrade(btn.dataset.plan || 'Pro Monthly', btn.dataset.amount || '৳1200'); }
   if(action === 'reloadAdmin'){ const adminBackend = $('admin-backend')?.value.trim(); state.store = await storageGet(); if(adminBackend) state.store.backendUrl = adminBackend; await save(); const synced = await pullAdminFromBackend(); toast(synced ? 'Website requests reloaded' : 'Extension requests reloaded'); render(); }
   if(action === 'approve'){ approve(Number(btn.dataset.index)); }
   if(action === 'reject'){ reject(Number(btn.dataset.index)); }
-  if(action === 'voiceQuickApi'){ voiceQuickApi(); }
   if(action === 'addApi'){ addApi(); }
   if(action === 'deleteApi'){ deleteApi(Number(btn.dataset.index)); }
 });

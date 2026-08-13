@@ -99,14 +99,17 @@ Walton search pages use plain prices such as `9,490` and a product layout that d
 Exported `live price` values now always use the Bangladeshi Taka symbol in the format `৳ 9,490`, including Walton pages that show a plain numeric price.
 
 
-## Voice API Creator (v1.5.5)
+## Create API by Voice (v1.6.0)
 
-A speech-to-text layer is now available at the top of the Free and Pro workspaces. Click **Create with voice** and say one complete command. APIGarden converts the speech to text, derives an API name and example input when needed, runs the existing Generate & Test flow, and saves the API automatically.
+The Chrome extension now includes a **Voice API** tab.
 
-Examples:
+1. Select **Start Recording** and speak naturally. The live transcript appears underneath and can be edited.
+2. Recording stays active until **Stop Recording** is selected. If Chrome ends the speech session because of silence, APIGarden automatically restarts it while the Voice API is still in listening mode.
+3. Select **Analyze & Create API**. APIGarden detects a website, product/search phrase, and an optional BDT price range.
+4. Select **Run API**. A new tab opens on the detected website search. APIGarden applies the spoken price range visually and extracts visible product name, live price, image, URL, and availability where the page exposes them.
+5. After testing, select **Save API** to put it in **My APIs**. Saved voice APIs can be run again.
+6. Select **Download JSON** to export the last tested live outcome.
 
-- `Create an API that recommends Walton refrigerators based on budget.`
-- `Create an API called Product Finder that finds Walton products by category and budget, example input refrigerator under 50000 taka.`
-- `Build an API that summarizes study notes into five bullet points.`
+Example command: `Go to Bata website and create an API for shoes from 0 to 3000 taka.`
 
-The feature uses the browser's Web Speech Recognition interface (`SpeechRecognition` / `webkitSpeechRecognition`), so Chrome or Edge is recommended. The browser may ask for microphone permission the first time. No OpenRouter key is exposed to the browser; API testing still uses the existing secure backend.
+Built-in website routing is included for Bata Bangladesh, Walton, Daraz Bangladesh, Pickaboo, and Rokomari. Explicit domains such as `example.com` are also accepted; for other spoken website names APIGarden makes a best-effort `.com` search URL.

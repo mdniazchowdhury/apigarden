@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "APIGarden",
-  "version": "1.5.5",
-  "description": "Record browser workflows and export Walton product names, ৳ live prices, images, links, and availability with improved search-page detection.",
+  "version": "1.6.0",
+  "description": "Create browser APIs by voice or activity recording, run website searches with price filters, and export live product results as JSON.",
   "action": {
     "default_title": "APIGarden",
     "default_popup": "popup.html"

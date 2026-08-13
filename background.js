@@ -1,4 +1,5 @@
 const RECORDING_KEY = 'apigarden_recorder_v1';
+const VOICE_RESULT_KEY = 'apigarden_voice_run_v1';
 
 function waitForTabComplete(tabId, timeoutMs=20000){
   return new Promise(resolve=>{
@@ -131,6 +132,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse)=>{
       rec.title = sender.tab?.title || rec.title;
       await setRecording(rec);
       sendResponse({ok:true});
+      return;
+    }
+    if(message?.type === 'APIGARDEN_RUN_VOICE_API'){
+      const intent = message.intent || {};
+      const targetUrl = String(intent.targetUrl || intent.finalUrl || intent.baseUrl || '').trim();
+      if(!isRecordableUrl(targetUrl)) throw new Error('No valid website URL was detected from the voice command.');
+      const tab = await chrome.tabs.create({url:targetUrl, active:true});
+      await waitForTabComplete(tab.id, 25000);
+      await new Promise(r=>setTimeout(r,2200));
+      let extraction;
+      try{
+        extraction = await chrome.tabs.sendMessage(tab.id,{
+          type:'APIGARDEN_VOICE_FILTER_PRODUCTS',
+          query:intent.query || '',
+          minPrice:intent.minPrice ?? null,
+          maxPrice:intent.maxPrice ?? null,
+          siteLabel:intent.siteLabel || intent.domain || ''
+        });
+      }catch(error){
+        extraction = await extractProductsFromTab(tab.id);
+      }
+      const lastOutcome={
+        apiName:intent.name || 'Voice Website API', description:intent.description || '', query:intent.query || '', status:'success',
+        sourceUrl:extraction?.sourceUrl || targetUrl, pageTitle:extraction?.pageTitle || '', resultCount:extraction?.resultCount || 0,
+        results:extraction?.results || [], filters:{minPrice:intent.minPrice ?? null,maxPrice:intent.maxPrice ?? null,currency:'BDT'},
+        voice:{transcript:intent.transcript || '',website:intent.siteLabel || intent.domain || ''}, generatedAt:new Date().toISOString(),
+        note:extraction?.resultCount ? 'Live visible product data extracted after the voice search and price filter were applied.' : 'The website opened and the filter ran, but no matching visible product cards were detected.'
+      };
+      await chrome.storage.local.set({[VOICE_RESULT_KEY]:{kind:message.runKind || 'draft',id:message.runId || intent.id || '',lastOutcome,finishedAt:new Date().toISOString()}});
+      sendResponse({ok:true,tabId:tab.id,url:targetUrl,extraction});
       return;
     }
     if(message?.type === 'APIGARDEN_REPLAY_RECORDING'){

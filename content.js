@@ -269,7 +269,7 @@ ${bodyText}`
   }
 
   function findProductUrl(card){
-    const link=card.matches?.('a[href]') ? card : card.querySelector('a[href*="route=product/product"],a[href*="/product/"],a[href]');
+    const link=card.matches?.('a[href]') ? card : card.querySelector('a[href*="route=product/product"],a[href*="/products/"],a[href*="/product/"],a[href]');
     return absoluteUrl(link?.getAttribute('href') || '');
   }
 
@@ -319,7 +319,7 @@ ${bodyText}`
     if(!results.length){
       const selectors = [
         '[itemtype*="Product"]','[data-product-id]','[data-product]','[class*="product-card"]','[class*="product-item"]',
-        '.product-layout','.product-thumb','.product-grid','.product-list',
+        '.product-layout','.product-thumb','.product-grid','.product-list','.grid__item','[class*="card-wrapper"]',
         '[class*="product-grid"] > *','[class*="products"] > *','[class*="listing"] > article','article'
       ];
       const cards=[];
@@ -378,6 +378,67 @@ ${bodyText}`
     if(msg && msg.type === 'APIGARDEN_GET_PAGE_CONTEXT'){
       const ctx = getPageContext();
       sendResponse({ok:true, text:ctx.text, url:ctx.url, title:ctx.title, items:ctx.items});
+      return true;
+    }
+    if(msg && msg.type === 'APIGARDEN_VOICE_FILTER_PRODUCTS'){
+      const query=String(msg.query || '').toLowerCase().trim();
+      const minPrice=msg.minPrice==null ? null : Number(msg.minPrice);
+      const maxPrice=msg.maxPrice==null ? null : Number(msg.maxPrice);
+      const toNumber=(value)=>{
+        const match=String(value||'').replace(/,/g,'').match(/\d+(?:\.\d+)?/);
+        return match ? Number(match[0]) : null;
+      };
+      const matchesRange=(value)=>{
+        const n=toNumber(value);
+        if(n==null) return minPrice==null && maxPrice==null;
+        if(minPrice!=null && n<minPrice) return false;
+        if(maxPrice!=null && n>maxPrice) return false;
+        return true;
+      };
+
+      // Apply the spoken price range visibly on common ecommerce product cards.
+      const cardSelectors=[
+        '[itemtype*="Product"]','[data-product-id]','[data-product]','[class*="product-card"]','[class*="product-item"]',
+        '.product-layout','.product-thumb','.product-grid','.product-list','.grid__item','[class*="card-wrapper"]','article'
+      ];
+      const cards=[]; const seen=new Set();
+      for(const selector of cardSelectors){
+        document.querySelectorAll(selector).forEach(card=>{
+          if(seen.has(card) || !card.querySelector('img')) return;
+          seen.add(card); cards.push(card);
+        });
+      }
+      let shown=0;
+      for(const card of cards){
+        const txt=textOf(card).toLowerCase();
+        const price=findPrice(card) || extractPrice(txt);
+        const priceOk=matchesRange(price);
+        // The website's own search page already enforces the spoken product query.
+        // Here we only enforce the spoken price range so model/product names that
+        // do not literally repeat the query are not incorrectly hidden.
+        const keep=priceOk;
+        if(!card.dataset.apigardenOriginalDisplay) card.dataset.apigardenOriginalDisplay=card.style.display || '__EMPTY__';
+        card.style.display=keep ? (card.dataset.apigardenOriginalDisplay==='__EMPTY__'?'':card.dataset.apigardenOriginalDisplay) : 'none';
+        if(keep) shown++;
+      }
+
+      let data=extractProducts();
+      data.results=(data.results||[]).filter(item=>{
+        return matchesRange(item['live price']);
+      });
+      data.resultCount=data.results.length;
+      data.query=query || data.query || '';
+
+      // Small confirmation strip on the website so the user can visually verify the run.
+      let banner=document.getElementById('apigarden-voice-banner');
+      if(!banner){
+        banner=document.createElement('div'); banner.id='apigarden-voice-banner';
+        Object.assign(banner.style,{position:'fixed',top:'12px',left:'50%',transform:'translateX(-50%)',zIndex:'2147483647',background:'#1f2551',color:'#fff',padding:'10px 16px',borderRadius:'12px',fontFamily:'Arial,sans-serif',fontSize:'13px',fontWeight:'700',boxShadow:'0 12px 30px rgba(0,0,0,.25)',maxWidth:'90vw',textAlign:'center'});
+        document.documentElement.appendChild(banner);
+      }
+      const rangeText=(minPrice!=null || maxPrice!=null) ? ` · Price ${minPrice!=null?'৳'+minPrice:'any'}–${maxPrice!=null?'৳'+maxPrice:'any'}` : '';
+      banner.textContent=`APIGarden Voice API: ${query || 'products'}${rangeText} · ${data.resultCount} matching products`;
+      sendResponse({ok:true,...data,visualFilterApplied:true,visibleCards:shown});
       return true;
     }
     if(msg && msg.type === 'APIGARDEN_EXTRACT_PRODUCTS'){

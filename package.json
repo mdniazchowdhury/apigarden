@@ -1,6 +1,6 @@
 {
   "name": "apigarden-secure-ai",
-  "version": "1.5.5",
+  "version": "1.4.0",
   "description": "APIGarden frontend with secure backend OpenRouter AI integration",
   "type": "module",
   "scripts": {
