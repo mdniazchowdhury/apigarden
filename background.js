@@ -1,7 +1,7 @@
 const RECORDING_KEY = 'apigarden_recorder_v1';
 const VOICE_RESULT_KEY = 'apigarden_voice_run_v1';
 
-function waitForTabComplete(tabId, timeoutMs=20000){
+function waitForTabComplete(tabId, timeoutMs=9000){
   return new Promise(resolve=>{
     let done=false;
     const finish=(value)=>{ if(done) return; done=true; clearTimeout(timer); chrome.tabs.onUpdated.removeListener(listener); resolve(value); };
@@ -21,7 +21,7 @@ async function ensureContentScript(tabId){
     return !!pong?.ok;
   }catch(e){ return false; }
 }
-async function sendWithRetry(tabId,message,{tries=5,delay=900}={}){
+async function sendWithRetry(tabId,message,{tries=4,delay=350}={}){
   let lastError;
   for(let i=0;i<tries;i++){
     try{
@@ -33,10 +33,10 @@ async function sendWithRetry(tabId,message,{tries=5,delay=900}={}){
 }
 
 async function extractProductsFromTab(tabId){
-  await waitForTabComplete(tabId);
-  await new Promise(r=>setTimeout(r,1800));
+  await waitForTabComplete(tabId, 9000);
+  await new Promise(r=>setTimeout(r,500));
   try{
-    return await sendWithRetry(tabId,{type:'APIGARDEN_EXTRACT_PRODUCTS'},{tries:5,delay:900});
+    return await sendWithRetry(tabId,{type:'APIGARDEN_EXTRACT_PRODUCTS'},{tries:4,delay:350});
   }catch(error){
     return {ok:false,error:error.message || String(error),results:[]};
   }
@@ -160,8 +160,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse)=>{
       const targetUrl = String(intent.targetUrl || intent.finalUrl || intent.baseUrl || '').trim();
       if(!isRecordableUrl(targetUrl)) throw new Error('No valid website URL was detected from the voice command.');
       const tab = await chrome.tabs.create({url:targetUrl, active:true});
-      await waitForTabComplete(tab.id, 25000);
-      await new Promise(r=>setTimeout(r,2200));
+      await waitForTabComplete(tab.id, 9000);
+      await new Promise(r=>setTimeout(r,500));
       let extraction;
       try{
         extraction = await sendWithRetry(tab.id,{
@@ -170,7 +170,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse)=>{
           minPrice:intent.minPrice ?? null,
           maxPrice:intent.maxPrice ?? null,
           siteLabel:intent.siteLabel || intent.domain || ''
-        },{tries:7,delay:1000});
+        },{tries:4,delay:350});
       }catch(error){
         extraction = await extractProductsFromTab(tab.id);
       }
