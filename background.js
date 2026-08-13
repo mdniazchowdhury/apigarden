@@ -87,7 +87,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse)=>{
       rec.isRecording = false;
       rec.stoppedAt = new Date().toISOString();
       await setRecording(rec);
-      sendResponse({ok:true, recording:rec});
+
+      // Extract the live results immediately from the page that the user
+      // stopped on. This allows Download JSON to work without requiring a
+      // separate Run API click first.
+      let extraction = {ok:false, results:[], resultCount:0};
+      try{
+        const tabs = await chrome.tabs.query({active:true, currentWindow:true});
+        let tab = tabs[0];
+        if((!tab || !isRecordableUrl(tab.url)) && rec.finalUrl){
+          const matches = await chrome.tabs.query({url: rec.finalUrl});
+          tab = matches[0];
+        }
+        if(tab?.id && isRecordableUrl(tab.url)){
+          extraction = await extractProductsFromTab(tab.id);
+        }
+      }catch(error){
+        extraction = {ok:false,error:error.message || String(error),results:[],resultCount:0};
+      }
+      sendResponse({ok:true, recording:rec, extraction});
       return;
     }
     if(message?.type === 'APIGARDEN_CLEAR_RECORDING'){

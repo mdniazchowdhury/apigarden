@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "APIGarden",
-  "version": "1.5.0",
-  "description": "Record browser workflows and export live visible product results with names, prices, images, and links as JSON.",
+  "version": "1.5.5",
+  "description": "Record browser workflows and export Walton product names, ৳ live prices, images, links, and availability with improved search-page detection.",
   "action": {
     "default_title": "APIGarden",
     "default_popup": "popup.html"

@@ -480,13 +480,33 @@ async function stopRecording(){
   if(!rec.finalUrl){ toast('Stopped, but no normal website page was captured'); render(); return; }
   const u = currentUser();
   u.apis = u.apis || [];
+  const extracted = res.extraction?.ok ? res.extraction : {results:[],resultCount:0};
+  const apiName = desiredName || rec.title || 'Recorded Browser Automation';
+  const apiDescription = `Recorded browser workflow with ${(rec.steps||[]).length} actions. Reopens the captured result page automatically.`;
   u.apis.unshift({
-    name: desiredName || rec.title || 'Recorded Browser Automation',
-    description: `Recorded browser workflow with ${(rec.steps||[]).length} actions. Reopens the captured result page automatically.`,
+    name: apiName,
+    description: apiDescription,
     runs:0,
     type:'recorded',
     finalUrl:rec.finalUrl,
-    recording:{startedAt:rec.startedAt,stoppedAt:rec.stoppedAt,steps:rec.steps || [],finalUrl:rec.finalUrl,title:rec.title || ''}
+    recording:{startedAt:rec.startedAt,stoppedAt:rec.stoppedAt,steps:rec.steps || [],finalUrl:rec.finalUrl,title:rec.title || ''},
+    lastOutcome:{
+      apiName,
+      description: apiDescription,
+      query: extracted.query || new URL(rec.finalUrl).searchParams.get('search') || new URL(rec.finalUrl).searchParams.get('q') || '',
+      status: 'success',
+      sourceUrl: extracted.sourceUrl || rec.finalUrl,
+      pageTitle: extracted.pageTitle || rec.title || '',
+      resultCount: extracted.resultCount || 0,
+      results: extracted.results || [],
+      recording:{
+        capturedActions:(rec.steps||[]).length,
+        startedAt:rec.startedAt || '',
+        stoppedAt:rec.stoppedAt || ''
+      },
+      generatedAt:new Date().toISOString(),
+      note: extracted.resultCount ? 'Live visible product data extracted when recording stopped.' : 'No product cards were detected on the page when recording stopped.'
+    }
   });
   state.store.users[key(state.role,state.email)] = u;
   await save();
@@ -494,7 +514,7 @@ async function stopRecording(){
   state.recording = {isRecording:false,steps:[],finalUrl:''};
   state.tab='apis';
   await saveSession();
-  toast('Recorded API created');
+  toast(extracted.resultCount ? `Recorded API created with ${extracted.resultCount} products` : 'Recorded API created; no products detected');
   render();
 }
 async function discardRecording(){
@@ -541,6 +561,10 @@ function apisView(){
     ${(u.apis || []).length ? u.apis.map((a,i)=>`<div class="api-row"><div><b>${esc(a.name)}</b><p>${esc(a.description)}</p><p class="small">${a.runs || 0} runs${a.type==='recorded'?' · Recorded automation':''}</p></div><div class="api-actions">${a.type==='recorded'?`<button class="btn primary" data-action="runRecordedApi" data-index="${i}">Run API</button>`:''}<button class="btn soft" data-action="downloadApiJson" data-index="${i}">Download JSON</button><button class="btn danger" data-action="deleteApi" data-index="${i}">Delete</button></div></div>`).join('') : `<p>No APIs yet.</p>`}
     <hr>
     <h3>Create quick API</h3>
+    <div class="voice-quick">
+      <button class="btn soft" id="voice-quick-btn" data-action="voiceQuickApi">🎤 Create with one voice command</button>
+      <p class="small" id="voice-quick-status">Say: “Create an API that recommends Walton refrigerators based on budget.”</p>
+    </div>
     <label>API name</label><input id="api-name" placeholder="Hotel chooser API">
     <label>Description</label><textarea id="api-desc" rows="3" placeholder="This API recommends the best option from a page based on user needs."></textarea>
     <div class="actions"><button class="btn primary" data-action="addApi">Save API</button></div>
@@ -857,6 +881,47 @@ async function reject(index){
   toast('Rejected and message sent');
   render();
 }
+
+
+function parseExtensionVoiceCommand(transcript){
+  let text = String(transcript || '').trim().replace(/[.!?]+$/,'');
+  text = text.replace(/^(please\s+)?(can you\s+)?/i,'');
+  text = text.replace(/^(create|make|build|generate)\s+(me\s+)?(a|an|the)?\s*api\s*/i,'').trim();
+  let name='';
+  const match=text.match(/^(?:called|named)\s+["“]?(.+?)["”]?\s+(?:that|which|to)\s+(.+)$/i);
+  if(match){ name=match[1].trim(); text=match[2].trim(); }
+  const description=text.replace(/^(that|which|to)\s+/i,'').trim() || transcript.trim();
+  if(!name){
+    const stem=description.replace(/\b(for|using|based on|from|with)\b[\s\S]*$/i,'').split(/\s+/).filter(w=>!/^(a|an|the|api|should|can|will|user|users|my|me)$/i.test(w)).slice(0,5).join(' ');
+    name=(stem || 'Voice Created').replace(/[^a-zA-Z0-9\s-]/g,' ').replace(/\s+/g,' ').trim().split(' ').map(w=>w.charAt(0).toUpperCase()+w.slice(1).toLowerCase()).join(' ')+' API';
+  } else if(!/api$/i.test(name)) name += ' API';
+  return {name, description};
+}
+
+async function voiceQuickApi(){
+  const Recognition=window.SpeechRecognition || window.webkitSpeechRecognition;
+  const status=$('voice-quick-status');
+  const button=$('voice-quick-btn');
+  if(!Recognition){ if(status) status.textContent='Speech recognition is unavailable here. Try the website in Chrome or Edge.'; toast('Speech recognition is not supported'); return; }
+  const recognition=new Recognition();
+  recognition.lang='en-US'; recognition.continuous=false; recognition.interimResults=false; recognition.maxAlternatives=1;
+  recognition.onstart=()=>{ if(button) button.textContent='⏹ Listening…'; if(status) status.textContent='Listening for one complete API command…'; };
+  recognition.onerror=(event)=>{ if(button) button.textContent='🎤 Create with one voice command'; if(status) status.textContent=event.error==='not-allowed'?'Microphone permission was denied.':`Speech error: ${event.error}`; };
+  recognition.onend=()=>{ if(button) button.textContent='🎤 Create with one voice command'; };
+  recognition.onresult=async(event)=>{
+    const transcript=event.results?.[0]?.[0]?.transcript?.trim() || '';
+    if(!transcript){ if(status) status.textContent='No command heard. Try again.'; return; }
+    const parsed=parseExtensionVoiceCommand(transcript);
+    const u=currentUser();
+    u.apis.unshift({name:parsed.name,description:parsed.description,runs:0,createdBy:'voice'});
+    state.store.users[key(state.role,state.email)] = u;
+    await save();
+    toast(`Voice API created: ${parsed.name}`);
+    render();
+  };
+  try{ recognition.start(); }catch(e){ if(status) status.textContent=e.message || 'Could not start speech recognition.'; }
+}
+
 async function addApi(){
   const name = $('api-name').value.trim();
   const description = $('api-desc').value.trim();
@@ -907,6 +972,7 @@ document.addEventListener('click', async (e)=>{
   if(action === 'reloadAdmin'){ const adminBackend = $('admin-backend')?.value.trim(); state.store = await storageGet(); if(adminBackend) state.store.backendUrl = adminBackend; await save(); const synced = await pullAdminFromBackend(); toast(synced ? 'Website requests reloaded' : 'Extension requests reloaded'); render(); }
   if(action === 'approve'){ approve(Number(btn.dataset.index)); }
   if(action === 'reject'){ reject(Number(btn.dataset.index)); }
+  if(action === 'voiceQuickApi'){ voiceQuickApi(); }
   if(action === 'addApi'){ addApi(); }
   if(action === 'deleteApi'){ deleteApi(Number(btn.dataset.index)); }
 });

@@ -90,3 +90,23 @@ Each JSON file contains the API name, query, outcome, status, result URL (when a
 
 ## Live JSON product extraction
 Recorded APIs now attempt to extract visible product information from the final opened page. The downloaded JSON may include `product name`, `live price`, `product image`, and `product url`. Values are taken from the live webpage DOM; the extension does not invent missing data. Extraction success depends on the target website's HTML structure and whether the products are visible after the page loads.
+
+## Walton extraction fix (v1.5.2)
+Walton search pages use plain prices such as `9,490` and a product layout that differs from common ecommerce cards. Version 1.5.2 adds a Walton-specific extractor and recognises comma-formatted prices even when no currency symbol is displayed. Reload the unpacked extension and make a new recording after updating.
+
+
+## Version 1.5.3
+Exported `live price` values now always use the Bangladeshi Taka symbol in the format `৳ 9,490`, including Walton pages that show a plain numeric price.
+
+
+## Voice API Creator (v1.5.5)
+
+A speech-to-text layer is now available at the top of the Free and Pro workspaces. Click **Create with voice** and say one complete command. APIGarden converts the speech to text, derives an API name and example input when needed, runs the existing Generate & Test flow, and saves the API automatically.
+
+Examples:
+
+- `Create an API that recommends Walton refrigerators based on budget.`
+- `Create an API called Product Finder that finds Walton products by category and budget, example input refrigerator under 50000 taka.`
+- `Build an API that summarizes study notes into five bullet points.`
+
+The feature uses the browser's Web Speech Recognition interface (`SpeechRecognition` / `webkitSpeechRecognition`), so Chrome or Edge is recommended. The browser may ask for microphone permission the first time. No OpenRouter key is exposed to the browser; API testing still uses the existing secure backend.

@@ -205,17 +205,26 @@ ${bodyText}`
     try{ return new URL(value || '', location.href).href; }catch(e){ return ''; }
   }
 
+  function absoluteUrl(value){
+    try{ return new URL(value || '', location.href).href; }catch(e){ return ''; }
+  }
+
+  function normalisePrice(value){
+    const raw=String(value || '').replace(/\s+/g,' ').trim();
+    if(!raw) return '';
+    const number=(raw.match(/\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d{3,}(?:\.\d{1,2})?/)||[])[0];
+    if(!number) return '';
+    // Walton prices are Bangladeshi Taka. Always export a consistent
+    // currency-labelled value, even when the webpage displays only digits.
+    return `৳ ${number}`;
+  }
+
   function extractPrice(text){
     const value = String(text || '').replace(/\s+/g, ' ').trim();
-    const patterns = [
-      /(?:৳|BDT|Tk\.?|TK\.?|টাকা)\s*[\d,]+(?:\.\d{1,2})?/i,
-      /[\d,]+(?:\.\d{1,2})?\s*(?:৳|BDT|Tk\.?|TK\.?|টাকা)/i,
-      /(?:price|মূল্য)\s*[:\-]?\s*(?:৳|BDT|Tk\.?)?\s*[\d,]+(?:\.\d{1,2})?/i
-    ];
-    for(const pattern of patterns){
-      const match = value.match(pattern);
-      if(match) return match[0].replace(/^price\s*[:\-]?\s*/i, '').trim();
-    }
+    const labelled = value.match(/(?:price|মূল্য)\s*[:\-]?\s*(?:৳|BDT|Tk\.?)?\s*[\d,]+(?:\.\d{1,2})?/i);
+    if(labelled) return normalisePrice(labelled[0].replace(/^(?:price|মূল্য)\s*[:\-]?\s*/i,''));
+    const currency = value.match(/(?:৳|BDT|Tk\.?|TK\.?|টাকা)\s*[\d,]+(?:\.\d{1,2})?|[\d,]+(?:\.\d{1,2})?\s*(?:৳|BDT|Tk\.?|TK\.?|টাকা)/i);
+    if(currency) return normalisePrice(currency[0]);
     return '';
   }
 
@@ -224,85 +233,128 @@ ${bodyText}`
   function findProductName(card){
     const selectors = [
       '[itemprop="name"]','[data-product-name]','[class*="product-name"]','[class*="product-title"]',
-      '[class*="item-name"]','[class*="item-title"]','h1','h2','h3','h4','a[title]','img[alt]'
+      '[class*="item-name"]','[class*="item-title"]','.caption h4','.caption h3','h1','h2','h3','h4','a[title]','img[alt]'
     ];
     for(const selector of selectors){
       const el=card.querySelector(selector);
       const candidate=(el?.getAttribute?.('data-product-name') || el?.getAttribute?.('title') || el?.getAttribute?.('alt') || textOf(el)).trim();
-      if(candidate && candidate.length>=3 && candidate.length<=180 && !/^add to cart|buy now|view details|quick view$/i.test(candidate)) return candidate;
+      if(candidate && candidate.length>=3 && candidate.length<=180 && !/^add to cart|buy now|view details|quick view|compare$/i.test(candidate)) return candidate;
     }
-    const lines=textOf(card).split(/\n|\s{2,}/).map(x=>x.trim()).filter(Boolean);
-    return lines.find(x=>x.length>=3 && x.length<=180 && !extractPrice(x)) || '';
+    return '';
   }
 
   function findPrice(card){
-    const selectors=['[itemprop="price"]','[data-price]','[class*="price"]','[id*="price"]'];
+    const selectors=['[itemprop="price"]','[data-price]','[class*="price"]','[id*="price"]','.caption .price'];
     for(const selector of selectors){
       const el=card.querySelector(selector);
       if(!el) continue;
       const raw=el.getAttribute('content') || el.getAttribute('data-price') || textOf(el);
-      const found=extractPrice(raw) || raw.trim();
-      if(found && /\d/.test(found)) return found;
+      const found=extractPrice(raw) || normalisePrice(raw);
+      if(found) return found;
     }
-    return extractPrice(textOf(card));
+    const lines=(card.innerText || card.textContent || '').split(/\n+/).map(x=>x.trim()).filter(Boolean);
+    for(const line of lines){
+      if(/^(available|limited|out of stock|compare)$/i.test(line)) continue;
+      const found=extractPrice(line) || (/^\s*\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?\s*$/.test(line) ? normalisePrice(line) : '');
+      if(found) return found;
+    }
+    return '';
   }
 
   function findImage(card){
-    const img=card.querySelector('img[src],img[data-src],img[data-lazy-src],source[srcset]');
+    const img=card.querySelector('img[src],img[data-src],img[data-lazy-src],img[data-original],source[srcset]');
     if(!img) return '';
-    const src=img.getAttribute('src') || img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || (img.getAttribute('srcset')||'').split(',')[0].trim().split(' ')[0];
+    const src=img.currentSrc || img.getAttribute('src') || img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || img.getAttribute('data-original') || (img.getAttribute('srcset')||'').split(',')[0].trim().split(' ')[0];
     return absoluteUrl(src);
   }
 
   function findProductUrl(card){
-    const link=card.matches?.('a[href]') ? card : card.querySelector('a[href]');
+    const link=card.matches?.('a[href]') ? card : card.querySelector('a[href*="route=product/product"],a[href*="/product/"],a[href]');
     return absoluteUrl(link?.getAttribute('href') || '');
   }
 
-  function extractProducts(){
-    const selectors = [
-      '[itemtype*="Product"]','[data-product-id]','[data-product]','[class*="product-card"]','[class*="product-item"]',
-      '[class*="product-grid"] > *','[class*="products"] > *','[class*="listing"] > article','article'
-    ];
-    const cards=[];
-    const seenNodes=new Set();
-    for(const selector of selectors){
-      document.querySelectorAll(selector).forEach(el=>{
-        if(seenNodes.has(el)) return;
-        const txt=textOf(el);
-        if(txt.length<5 || txt.length>2500) return;
-        if(!el.querySelector('img') && !extractPrice(txt)) return;
-        seenNodes.add(el); cards.push(el);
-      });
-    }
-    if(!cards.length){
-      document.querySelectorAll('li,div').forEach(el=>{
-        if(cards.length>=150) return;
-        const txt=textOf(el);
-        if(txt.length<8 || txt.length>900) return;
-        if(el.querySelector('img') && extractPrice(txt)) cards.push(el);
-      });
-    }
-
-    const results=[];
+  function waltonProducts(){
+    if(!/waltonbd\.com$/i.test(location.hostname) && !/\.waltonbd\.com$/i.test(location.hostname)) return [];
+    const output=[];
     const seen=new Set();
-    for(const card of cards){
-      const productName=findProductName(card);
-      const livePrice=findPrice(card);
+    const links=[...document.querySelectorAll('a[href*="route=product/product"], h1 a[href], h2 a[href], h3 a[href], h4 a[href], h5 a[href], h6 a[href], .caption a[href]')];
+    for(const link of links){
+      const name=(textOf(link) || link.getAttribute('title') || '').trim();
+      if(!name || /^compare$/i.test(name)) continue;
+      let card=link.closest('.product-thumb,.product-layout,.product-grid,.product-list,[class*="product-item"],[class*="product-card"],.col-lg-3,.col-md-3,.col-sm-6,.col-xs-12');
+      if(!card){
+        let node=link.parentElement;
+        let best=null;
+        for(let i=0;i<10 && node && node!==document.body;i++,node=node.parentElement){
+          const txt=textOf(node);
+          const hasImage=!!node.querySelector('img');
+          const hasStatus=/AVAILABLE|LIMITED|OUT OF STOCK/i.test(txt);
+          const hasPrice=/৳|BDT|TK\.?|\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?/i.test(txt);
+          if(hasImage && txt.includes(name) && (hasStatus || hasPrice)) { best=node; break; }
+          if(!best && hasImage && txt.includes(name)) best=node;
+        }
+        card=best;
+      }
+      if(!card) continue;
+      const productUrl=absoluteUrl(link.getAttribute('href'));
       const productImage=findImage(card);
-      const productUrl=findProductUrl(card);
-      if(!productName || (!livePrice && !productImage)) continue;
-      const key=(productName+'|'+livePrice+'|'+productUrl).toLowerCase();
+      const livePrice=findPrice(card);
+      const key=(name+'|'+productUrl).toLowerCase();
       if(seen.has(key)) continue;
       seen.add(key);
-      results.push({
-        'product name': productName,
+      output.push({
+        'product name': name,
         'live price': livePrice,
         'product image': productImage,
-        'product url': productUrl
+        'product url': productUrl,
+        'availability': ((textOf(card).match(/AVAILABLE|LIMITED|OUT OF STOCK/i)||[])[0] || '')
       });
-      if(results.length>=100) break;
     }
+    return output;
+  }
+
+  function extractProducts(){
+    let results=waltonProducts();
+
+    if(!results.length){
+      const selectors = [
+        '[itemtype*="Product"]','[data-product-id]','[data-product]','[class*="product-card"]','[class*="product-item"]',
+        '.product-layout','.product-thumb','.product-grid','.product-list',
+        '[class*="product-grid"] > *','[class*="products"] > *','[class*="listing"] > article','article'
+      ];
+      const cards=[];
+      const seenNodes=new Set();
+      for(const selector of selectors){
+        document.querySelectorAll(selector).forEach(el=>{
+          if(seenNodes.has(el)) return;
+          const txt=textOf(el);
+          if(txt.length<3 || txt.length>3000) return;
+          if(!el.querySelector('img')) return;
+          seenNodes.add(el); cards.push(el);
+        });
+      }
+      const seen=new Set();
+      results=[];
+      for(const card of cards){
+        const productName=findProductName(card);
+        const livePrice=findPrice(card);
+        const productImage=findImage(card);
+        const productUrl=findProductUrl(card);
+        if(!productName || (!livePrice && !productImage)) continue;
+        const key=(productName+'|'+productUrl).toLowerCase();
+        if(seen.has(key)) continue;
+        seen.add(key);
+        results.push({
+          'product name': productName,
+          'live price': livePrice,
+          'product image': productImage,
+          'product url': productUrl,
+          'availability': ((textOf(card).match(/AVAILABLE|LIMITED|OUT OF STOCK/i)||[])[0] || '')
+        });
+        if(results.length>=100) break;
+      }
+    }
+
     return {
       query: new URLSearchParams(location.search).get('q') || new URLSearchParams(location.search).get('search') || '',
       sourceUrl: location.href,
