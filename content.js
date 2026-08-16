@@ -313,8 +313,113 @@ ${bodyText}`
     return output;
   }
 
+  function jsonLdProducts(){
+    const out=[];
+    const seen=new Set();
+    const walk=(node)=>{
+      if(!node) return;
+      if(Array.isArray(node)){ node.forEach(walk); return; }
+      if(typeof node!=='object') return;
+      const type=String(node['@type'] || '').toLowerCase();
+      if(type==='product'){
+        const offers=Array.isArray(node.offers) ? node.offers[0] : (node.offers || {});
+        const name=String(node.name || '').trim();
+        const url=absoluteUrl(node.url || '');
+        const imageValue=Array.isArray(node.image) ? node.image[0] : (typeof node.image==='object' ? (node.image.url || node.image.contentUrl) : node.image);
+        const image=absoluteUrl(imageValue || '');
+        const rawPrice=offers.price || offers.lowPrice || offers.highPrice || '';
+        const price=rawPrice!=='' ? normalisePrice(String(rawPrice)) : '';
+        if(name){
+          const key=(name+'|'+url).toLowerCase();
+          if(!seen.has(key)){
+            seen.add(key);
+            out.push({'product name':name,'live price':price,'product image':image,'product url':url,'availability':String(offers.availability || '').split('/').pop().replace(/([a-z])([A-Z])/g,'$1 $2').toUpperCase()});
+          }
+        }
+      }
+      Object.values(node).forEach(walk);
+    };
+    document.querySelectorAll('script[type="application/ld+json"]').forEach(script=>{
+      try{ walk(JSON.parse(script.textContent || 'null')); }catch(e){}
+    });
+    return out;
+  }
+
+  function darazProducts(){
+    if(!/(^|\.)daraz\.com\.bd$/i.test(location.hostname)) return [];
+    const output=[];
+    const seen=new Set();
+    const links=[...document.querySelectorAll(
+      'a[href*="-i"][href*=".html"], a[href*="/products/"], [data-qa-locator="product-item"] a[href]'
+    )];
+
+    const findCard=(link)=>{
+      const direct=link.closest('[data-qa-locator="product-item"],.Bm3ON,[class*="Bm3ON"],[class*="gridItem"],[class*="product-card"],[class*="product-item"]');
+      if(direct) return direct;
+      let node=link.parentElement, best=null;
+      for(let i=0;i<10 && node && node!==document.body;i++,node=node.parentElement){
+        const txt=textOf(node);
+        const hasImage=!!node.querySelector('img');
+        const hasPrice=/৳|BDT|Tk\.?|টাকা/i.test(txt);
+        if(hasImage && hasPrice && txt.length<2500) return node;
+        if(!best && hasImage && txt.length<2500) best=node;
+      }
+      return best;
+    };
+
+    for(const link of links){
+      const href=absoluteUrl(link.getAttribute('href') || '');
+      if(!href || !/(?:-i\d+.*\.html|\/products\/)/i.test(href)) continue;
+      const card=findCard(link);
+      if(!card) continue;
+      const name=(link.getAttribute('title') || textOf(link) || findProductName(card) || '').replace(/\s+/g,' ').trim();
+      const livePrice=findPrice(card);
+      const productImage=findImage(card);
+      if(!name || (!livePrice && !productImage)) continue;
+      const key=(name+'|'+href).toLowerCase();
+      if(seen.has(key)) continue;
+      seen.add(key);
+      const cardText=textOf(card);
+      const stock=(cardText.match(/OUT OF STOCK|SOLD OUT|AVAILABLE|LIMITED/i)||[])[0] || '';
+      output.push({
+        'product name':name.slice(0,220),
+        'live price':livePrice,
+        'product image':productImage,
+        'product url':href,
+        'availability':stock.toUpperCase()
+      });
+      if(output.length>=100) break;
+    }
+
+    if(!output.length){
+      // Daraz frequently changes generated CSS class names. This fallback starts
+      // from visible images/links and climbs to the smallest container carrying
+      // a Taka price, so extraction does not depend on one fragile class name.
+      const allLinks=[...document.querySelectorAll('a[href]')];
+      for(const link of allLinks){
+        const href=absoluteUrl(link.getAttribute('href') || '');
+        if(!/(?:-i\d+.*\.html|\/products\/)/i.test(href)) continue;
+        let card=link, chosen=null;
+        for(let i=0;i<10 && card && card!==document.body;i++,card=card.parentElement){
+          const txt=textOf(card);
+          if(card.querySelector('img') && /৳|BDT|Tk\.?|টাকা/i.test(txt) && txt.length<2500){ chosen=card; break; }
+        }
+        if(!chosen) continue;
+        const name=(link.getAttribute('title') || textOf(link) || findProductName(chosen) || '').replace(/\s+/g,' ').trim();
+        const price=findPrice(chosen), image=findImage(chosen);
+        if(!name || (!price && !image)) continue;
+        const key=(name+'|'+href).toLowerCase(); if(seen.has(key)) continue; seen.add(key);
+        output.push({'product name':name.slice(0,220),'live price':price,'product image':image,'product url':href,'availability':''});
+        if(output.length>=100) break;
+      }
+    }
+    return output;
+  }
+
   function extractProducts(){
-    let results=waltonProducts();
+    let results=darazProducts();
+    if(!results.length) results=waltonProducts();
+    if(!results.length) results=jsonLdProducts();
 
     if(!results.length){
       const selectors = [
@@ -426,6 +531,37 @@ ${bodyText}`
     }
     return bestScore>=20?best:null;
   }
+  function findSemanticControl(terms, exclude=[]){
+    const wanted=terms.map(norm);
+    let best=null,bestScore=0;
+    const selector='input:not([type="hidden"]),textarea,[contenteditable="true"],button,[role="button"],[role="combobox"],[aria-haspopup="listbox"],label,div[tabindex]';
+    for(const el of Array.from(document.querySelectorAll(selector)).filter(agentVisible)){
+      const txt=nearbyText(el);
+      if(exclude.some(x=>txt.includes(norm(x)))) continue;
+      let score=0;
+      for(const w of wanted){ if(txt===w)score=Math.max(score,100); else if(txt.includes(w))score=Math.max(score,45); }
+      if(el.matches('input,textarea,[contenteditable="true"],[role="combobox"]')) score+=10;
+      if(score>bestScore){best=el;bestScore=score;}
+    }
+    return bestScore>=25?best:null;
+  }
+  async function resolveSemanticInput(terms,exclude=[]){
+    let input=findSemanticInput(terms,exclude);
+    if(input)return input;
+    const ctl=findSemanticControl(terms,exclude);
+    if(!ctl)return null;
+    agentClick(ctl); await new Promise(r=>setTimeout(r,250));
+    input=findSemanticInput(terms,exclude);
+    if(input)return input;
+    if(ctl.matches('input,textarea,[contenteditable="true"]'))return ctl;
+    const nested=ctl.querySelector?.('input:not([type="hidden"]),textarea,[contenteditable="true"]');
+    return nested&&agentVisible(nested)?nested:null;
+  }
+  function searchSubmitButton(){
+    return agentFindByText(['search flights','find flights','show flights','search','find'], 'button,a,[role="button"],input[type="submit"]') ||
+      Array.from(document.querySelectorAll('button[type="submit"],input[type="submit"]')).find(agentVisible) || null;
+  }
+
   async function fillAutocomplete(el,value){
     if(!el||!value) return {ok:false};
     try{ agentClick(el); if(el.select) el.select(); }catch(e){}
@@ -462,26 +598,47 @@ ${bodyText}`
   async function autonomousAgent(intent){
     const log=[]; const goal=String(intent.transcript||intent.goal||'').trim();
     const travel=intent.travel||{};
-    const clickTerms=async(terms,label)=>{const el=agentFindByText(terms);if(el){agentClick(el);log.push({action:'click',target:label||agentText(el),status:'done'});await new Promise(r=>setTimeout(r,650));return true;}return false;};
-    // Remove common consent blockers without making assumptions about purchases.
+    const clickTerms=async(terms,label)=>{const el=agentFindByText(terms);if(el){agentClick(el);log.push({action:'click',target:label||agentText(el),status:'done'});await new Promise(r=>setTimeout(r,450));return true;}return false;};
     await clickTerms(['accept all','accept cookies','agree','allow all'],'cookie consent');
     if(intent.agentType==='travel' || travel.origin || travel.destination || /\bflights?\b/i.test(goal)){
-      if(/trip\.com/i.test(location.hostname+goal)) await clickTerms(['flights','flight'],'Flights');
-      const origin=travel.origin||''; const destination=travel.destination||'';
-      let from=findSemanticInput(['from','origin','departure airport','leaving from','flying from'],['date','time']);
-      let to=findSemanticInput(['to','destination','arrival airport','going to','flying to'],['date','time']);
-      if(origin&&from){const r=await fillAutocomplete(from,origin);log.push({action:'fill',field:'origin',value:origin,status:r.ok?'done':'failed',selected:r.selected||''});}
-      if(destination&&to){const r=await fillAutocomplete(to,destination);log.push({action:'fill',field:'destination',value:destination,status:r.ok?'done':'failed',selected:r.selected||''});}
-      // If the site already supplies a default travel date and the user did not specify one, preserve it rather than inventing a date.
-      if(travel.departDate){
-        const d=findSemanticInput(['depart','departure date','date']);
-        if(d){nativeSet(d,travel.departDate);log.push({action:'fill',field:'departDate',value:travel.departDate,status:'done'});}
+      // On a result/verification page, do not start the search over again.
+      const already=extractTravelResults();
+      if(intent.verificationPass && already.resultCount){
+        return {...already,agent:{goal,steps:[{action:'verify',target:'flight result page',status:'done'}],status:'goal_reached',usedExistingDateDefault:!travel.departDate}};
       }
-      const searchBtn=agentFindByText(['search','search flights','find flights','show flights'], 'button,a,[role="button"],input[type="submit"]');
-      if(searchBtn){agentClick(searchBtn);log.push({action:'click',target:'Search',status:'done'});await new Promise(r=>setTimeout(r,1800));}
-      // SPA searches can update in-place; full navigations are handled by the background worker after this response.
+      // Many travel homepages require selecting the Flights product first.
+      await clickTerms(['flights','flight','book a flight','book flight'],'Flights');
+      const origin=travel.origin||''; const destination=travel.destination||'';
+      let from=await resolveSemanticInput(['from','origin','departure airport','departure city','leaving from','flying from'],['date','time','return']);
+      let to=await resolveSemanticInput(['to','destination','arrival airport','arrival city','going to','flying to'],['date','time','return']);
+      if(origin){
+        if(from){const r=await fillAutocomplete(from,origin);log.push({action:'fill',field:'origin',value:origin,status:r.ok?'done':'failed',selected:r.selected||''});}
+        else log.push({action:'fill',field:'origin',value:origin,status:'not_found'});
+      }
+      if(destination){
+        if(to){const r=await fillAutocomplete(to,destination);log.push({action:'fill',field:'destination',value:destination,status:r.ok?'done':'failed',selected:r.selected||''});}
+        else log.push({action:'fill',field:'destination',value:destination,status:'not_found'});
+      }
+      if(travel.departDate){
+        const d=await resolveSemanticInput(['depart','departure date','travel date','date'],['return']);
+        if(d){nativeSet(d,travel.departDate);log.push({action:'fill',field:'departDate',value:travel.departDate,status:'done'});}
+        else log.push({action:'fill',field:'departDate',value:travel.departDate,status:'not_found'});
+      }
+      const missing=[]; if(origin&&!from)missing.push('origin field'); if(destination&&!to)missing.push('destination field');
+      if(missing.length){
+        return {ok:true,sourceUrl:location.href,pageTitle:document.title||'',resultCount:0,results:[],agent:{goal,steps:log,status:'needs_user_action',reason:`Could not reliably locate ${missing.join(' and ')} on this page.`}};
+      }
+      const searchBtn=searchSubmitButton();
+      if(searchBtn){
+        agentClick(searchBtn);log.push({action:'click',target:'Search flights',status:'done'});
+        // Return quickly enough that full-page navigation does not destroy the extension message channel.
+        await new Promise(r=>setTimeout(r,700));
+      }else{
+        log.push({action:'click',target:'Search flights',status:'not_found'});
+      }
       const extracted=extractTravelResults();
-      return {...extracted,agent:{goal,steps:log,status:extracted.resultCount?'goal_reached':'attempted',usedExistingDateDefault:!travel.departDate}};
+      const status=extracted.resultCount?'goal_reached':(searchBtn?'search_submitted':'needs_user_action');
+      return {...extracted,agent:{goal,steps:log,status,usedExistingDateDefault:!travel.departDate,reason:searchBtn?'Search submitted; background verifier will inspect the final result page.':'Could not reliably locate the flight search button.'}};
     }
     return {ok:false,error:'The autonomous agent could not map this instruction to a supported action plan yet.',sourceUrl:location.href,pageTitle:document.title||'',resultCount:0,results:[],agent:{goal,steps:log,status:'needs_user_action'}};
   }

@@ -123,3 +123,7 @@ Voice/Text API commands can now describe a multi-step website goal, not only a d
 For recognized travel instructions APIGarden opens the real site and performs a best-effort semantic workflow: inspect visible controls, click the Flights section, identify From/To fields from labels/ARIA/placeholder/nearby text, fill autocomplete suggestions, submit the search, wait for navigation, verify the destination page, and extract visible result cards into JSON.
 
 If a date was not supplied, APIGarden preserves a website-provided default date where available rather than silently inventing a date. CAPTCHA, login gates, unsupported widgets, and ambiguous/missing required information may still require user action.
+
+
+## v1.9.0 voice flight agent
+Speak or type a command such as: `Go to Trip.com and search available flights from Dhaka to Chittagong.` APIGarden parses the route, opens the requested live site, locates flight controls, fills From/To, submits the search, verifies the final page, and exports visible results to JSON. If the site requires information that was not supplied and has no safe default (or blocks automation), the result is marked `needs_user_action` instead of inventing data.

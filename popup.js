@@ -484,7 +484,10 @@ const VOICE_SITES = {
   daraz: {label:'Daraz Bangladesh', base:'https://www.daraz.com.bd', search:'https://www.daraz.com.bd/catalog/?q={query}'},
   pickaboo: {label:'Pickaboo', base:'https://www.pickaboo.com', search:'https://www.pickaboo.com/search?q={query}'},
   rokomari: {label:'Rokomari', base:'https://www.rokomari.com', search:'https://www.rokomari.com/search?term={query}'},
-  trip: {label:'Trip.com', base:'https://www.trip.com', search:'https://www.trip.com/flights/'}
+  trip: {label:'Trip.com', base:'https://www.trip.com/flights/', search:'https://www.trip.com/flights/'},
+  biman: {label:'Biman Bangladesh Airlines', base:'https://www.biman-airlines.com/', search:'https://www.biman-airlines.com/'},
+  usbangla: {label:'US-Bangla Airlines', base:'https://usbair.com/', search:'https://usbair.com/'},
+  novoair: {label:'NOVOAIR', base:'https://www.flynovoair.com/', search:'https://www.flynovoair.com/'}
 };
 function chooseBestVoiceSite(text){
   const t=String(text||'').toLowerCase();
@@ -561,6 +564,14 @@ function detectVoicePrices(text){
 }
 function detectVoiceSite(text){
   const lower=text.toLowerCase();
+  const aliases=[
+    {rx:/\b(?:biman|biman bangladesh(?: airlines)?)\b/i,key:'biman'},
+    {rx:/\b(?:us[ -]?bangla|usbair)\b/i,key:'usbangla'},
+    {rx:/\b(?:novoair|novo air|flynovoair)\b/i,key:'novoair'},
+    {rx:/\b(?:trip\.com|trip com)\b/i,key:'trip'}
+  ];
+  const ali=aliases.find(a=>a.rx.test(lower));
+  if(ali) return {...VOICE_SITES[ali.key],key:ali.key,domain:new URL(VOICE_SITES[ali.key].base).hostname};
   for(const [key,site] of Object.entries(VOICE_SITES)){
     if(new RegExp(`\\b${key}\\b`,'i').test(lower)) return {...site,key,domain:new URL(site.base).hostname};
   }
@@ -601,11 +612,20 @@ function detectVoiceQuery(text, site, prices){
   return q || 'products';
 }
 function detectTravelIntent(text){
-  const t=String(text||'').trim();
-  if(!/\b(flight|flights|airfare|airline|airport|trip\.com)\b/i.test(t)) return null;
+  const t=String(text||'').replace(/\s+/g,' ').trim();
+  if(!/\b(flight|flights|airfare|airline|airport|trip\.com|biman|us[ -]?bangla|novoair)\b/i.test(t)) return null;
   let origin='', destination='', departDate='';
-  const route=t.match(/(?:from\s+)?([A-Za-z][A-Za-z .'-]{1,40}?)\s+(?:to|→)\s+([A-Za-z][A-Za-z .'-]{1,50}?)(?=\s+(?:on|for|depart|departure|return|check|search|show|find|all|available|flight|flights)\b|[,.]|$)/i);
-  if(route){ origin=route[1].replace(/^(?:go|fly|flight|flights|select|search)\s+/i,'').trim(); destination=route[2].trim(); }
+  // Prefer an explicit "from X to Y" route so phrases such as
+  // "go to Biman website and search available flights from Dhaka to Chittagong"
+  // cannot accidentally become one huge origin string.
+  let route=t.match(/\bfrom\s+([A-Za-z][A-Za-z .'-]{1,45}?)\s+to\s+([A-Za-z][A-Za-z .'-]{1,45}?)(?=\s+(?:on|for|depart|departure|return|check|search|show|find|all|available|flight|flights|with|and)\b|[,.]|$)/i);
+  if(!route){
+    route=t.match(/\b([A-Za-z][A-Za-z .'-]{1,35}?)\s+to\s+([A-Za-z][A-Za-z .'-]{1,35}?)(?=\s+(?:on|for|depart|departure|return|check|search|show|find|available|flight|flights)\b|[,.]|$)/i);
+  }
+  if(route){
+    origin=route[1].replace(/^(?:go|fly|flight|flights|select|search|available|from)\s+/i,'').trim();
+    destination=route[2].trim();
+  }
   const iso=t.match(/\b(20\d{2}-\d{2}-\d{2})\b/); if(iso) departDate=iso[1];
   return {origin,destination,departDate};
 }
@@ -713,7 +733,7 @@ async function runVoiceDraft(){
   if(!res?.ok){ state.voice.lastError=res?.error || 'Could not run voice API'; render(); return; }
   const extracted=res.extraction?.ok?res.extraction:{results:[],resultCount:0,sourceUrl:res.url||d.targetUrl,pageTitle:''};
   d.lastOutcome={
-    apiName:d.name, description:d.description, query:d.query, status:extracted.agent?.status==='needs_user_action'?'needs_user_action':'success', sourceUrl:extracted.sourceUrl||res.url||d.targetUrl,
+    apiName:d.name, description:d.description, query:d.query, status:extracted.agent?.status==='needs_user_action'?'needs_user_action':((extracted.resultCount||0)>0?'success':'no_results_captured'), sourceUrl:extracted.sourceUrl||res.url||d.targetUrl,
     pageTitle:extracted.pageTitle||'', resultCount:extracted.resultCount||0, results:extracted.results||[],
     filters:d.agentType==='travel'?null:{minPrice:d.minPrice,maxPrice:d.maxPrice,currency:'BDT'}, voice:{transcript:d.transcript,website:d.siteLabel}, travel:d.travel||null, agent:extracted.agent||null,
     generatedAt:new Date().toISOString(), note:extracted.resultCount?(d.agentType==='travel'?'Autonomous browser agent reached a live result page and extracted visible flight results.':'Live visible product data extracted after the voice search and price filter were applied.'):(d.agentType==='travel'?'The autonomous browser agent attempted the workflow but could not verify visible final flight results.':'The website opened and the filter ran, but no matching visible product cards were detected.')
@@ -738,7 +758,7 @@ async function runVoiceApi(index){
   if(!res?.ok){ toast(res?.error||'Could not run voice API'); return; }
   const ex=res.extraction?.ok?res.extraction:{results:[],resultCount:0};
   api.runs=(api.runs||0)+1; api.finalUrl=ex.sourceUrl||res.url||api.finalUrl;
-  api.lastOutcome={apiName:api.name,description:api.description,query:intent.query||'',status:ex.agent?.status==='needs_user_action'?'needs_user_action':'success',sourceUrl:api.finalUrl,pageTitle:ex.pageTitle||'',resultCount:ex.resultCount||0,results:ex.results||[],filters:intent.agentType==='travel'?null:{minPrice:intent.minPrice??null,maxPrice:intent.maxPrice??null,currency:'BDT'},voice:{transcript:intent.transcript||'',website:intent.siteLabel||intent.domain||''},travel:intent.travel||null,agent:ex.agent||null,generatedAt:new Date().toISOString(),note:ex.resultCount?(intent.agentType==='travel'?'Autonomous browser agent reached the live result page and captured visible flight results.':'Live visible product data extracted after the saved voice API ran.'):(intent.agentType==='travel'?'The autonomous workflow ran, but final visible flight results could not be verified.':'The website opened, but no matching visible product cards were detected.')};
+  api.lastOutcome={apiName:api.name,description:api.description,query:intent.query||'',status:ex.agent?.status==='needs_user_action'?'needs_user_action':((ex.resultCount||0)>0?'success':'no_results_captured'),sourceUrl:api.finalUrl,pageTitle:ex.pageTitle||'',resultCount:ex.resultCount||0,results:ex.results||[],filters:intent.agentType==='travel'?null:{minPrice:intent.minPrice??null,maxPrice:intent.maxPrice??null,currency:'BDT'},voice:{transcript:intent.transcript||'',website:intent.siteLabel||intent.domain||''},travel:intent.travel||null,agent:ex.agent||null,generatedAt:new Date().toISOString(),note:ex.resultCount?(intent.agentType==='travel'?'Autonomous browser agent reached the live result page and captured visible flight results.':'Live visible product data extracted after the saved voice API ran.'):(intent.agentType==='travel'?'The autonomous workflow ran, but final visible flight results could not be verified.':'The website opened, but no matching visible product cards were detected.')};
   await save(); await chrome.storage.local.remove([VOICE_RESULT_KEY]); toast(ex.resultCount?`${ex.resultCount} matching live products captured`:'Page opened; no matching products detected'); render();
 }
 

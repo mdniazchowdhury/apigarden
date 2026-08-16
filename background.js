@@ -34,12 +34,24 @@ async function sendWithRetry(tabId,message,{tries=4,delay=350}={}){
 
 async function extractProductsFromTab(tabId){
   await waitForTabComplete(tabId, 9000);
-  await new Promise(r=>setTimeout(r,500));
+  await new Promise(r=>setTimeout(r,450));
   try{
-    return await sendWithRetry(tabId,{type:'APIGARDEN_EXTRACT_PRODUCTS'},{tries:4,delay:350});
+    return await sendWithRetry(tabId,{type:'APIGARDEN_EXTRACT_PRODUCTS'},{tries:4,delay:300});
   }catch(error){
-    return {ok:false,error:error.message || String(error),results:[]};
+    return {ok:false,error:error.message || String(error),results:[],resultCount:0};
   }
+}
+
+async function extractProductsUntilReady(tabId,{timeoutMs=7000,intervalMs=650}={}){
+  const started=Date.now();
+  let best={ok:false,results:[],resultCount:0};
+  while(Date.now()-started < timeoutMs){
+    const current=await extractProductsFromTab(tabId);
+    if((current?.resultCount||0) > (best?.resultCount||0)) best=current;
+    if((current?.resultCount||0) > 0) return current;
+    await new Promise(r=>setTimeout(r,intervalMs));
+  }
+  return best;
 }
 
 
@@ -161,8 +173,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse)=>{
       const targetUrl = String((autonomous ? (intent.baseUrl || intent.targetUrl) : intent.targetUrl) || intent.finalUrl || intent.baseUrl || '').trim();
       if(!isRecordableUrl(targetUrl)) throw new Error('No valid website URL was detected from the voice command.');
       const tab = await chrome.tabs.create({url:targetUrl, active:true});
-      await waitForTabComplete(tab.id, 9000);
-      await new Promise(r=>setTimeout(r,350));
+      await waitForTabComplete(tab.id, 12000);
+      await new Promise(r=>setTimeout(r,250));
       let extraction;
       if(autonomous){
         let first;
@@ -170,8 +182,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse)=>{
         catch(error){ first={ok:false,error:error.message||String(error),results:[],resultCount:0}; }
         // The first pass may trigger a SPA/full-page navigation. Re-read the destination page
         // and run one verification pass so the final JSON comes from the result page.
-        await new Promise(r=>setTimeout(r,1200));
-        await waitForTabComplete(tab.id, 7000);
+        await new Promise(r=>setTimeout(r,900));
+        await waitForTabComplete(tab.id, 12000);
         let second;
         try{ second = await sendWithRetry(tab.id,{type:'APIGARDEN_AUTONOMOUS_AGENT',intent:{...intent,verificationPass:true}},{tries:4,delay:250}); }
         catch(error){ second=null; }
@@ -191,12 +203,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse)=>{
             maxPrice:intent.maxPrice ?? null,
             siteLabel:intent.siteLabel || intent.domain || ''
           },{tries:4,delay:300});
+          // Dynamic catalog sites such as Daraz can finish document loading before
+          // React has rendered product cards. If the first extraction is empty,
+          // keep checking the live result page briefly and use the first real cards.
+          if(!(extraction?.resultCount>0)){
+            const delayed=await extractProductsUntilReady(tab.id,{timeoutMs:7500,intervalMs:650});
+            if((delayed?.resultCount||0) >= (extraction?.resultCount||0)) extraction=delayed;
+          }
         }catch(error){
-          extraction = await extractProductsFromTab(tab.id);
+          extraction = await extractProductsUntilReady(tab.id,{timeoutMs:7500,intervalMs:650});
         }
       }
       const lastOutcome={
-        apiName:intent.name || 'Voice Website API', description:intent.description || '', query:intent.query || '', status:(extraction?.agent?.status==='needs_user_action'?'needs_user_action':'success'),
+        apiName:intent.name || 'Voice Website API', description:intent.description || '', query:intent.query || '', status:(extraction?.agent?.status==='needs_user_action'?'needs_user_action':((extraction?.resultCount||0)>0?'success':(extraction?.agent?.status||'no_results_captured'))),
         sourceUrl:extraction?.sourceUrl || targetUrl, pageTitle:extraction?.pageTitle || '', resultCount:extraction?.resultCount || 0,
         results:extraction?.results || [], filters:{minPrice:intent.minPrice ?? null,maxPrice:intent.maxPrice ?? null,currency:'BDT'},
         voice:{transcript:intent.transcript || '',website:intent.siteLabel || intent.domain || ''}, agent:extraction?.agent || null, travel:intent.travel || null, generatedAt:new Date().toISOString(),

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "APIGarden",
-  "version": "1.8.0",
-  "description": "APIGarden autonomous Voice API: analyzes live pages, performs multi-step browser actions, verifies results, saves APIs, and exports live JSON.",
+  "version": "1.9.1",
+  "description": "APIGarden Voice Browser Agent with improved live catalog extraction for dynamic ecommerce pages such as Daraz, plus JSON export, API saving, and browser automation.",
   "action": {
     "default_title": "APIGarden",
     "default_popup": "popup.html"
