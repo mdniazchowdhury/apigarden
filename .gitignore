@@ -1,8 +1,0 @@
-__pycache__/
-*.pyc
-.venv/
-.env
-instance/*.db
-memo_system.db
-.pytest_cache/
-.DS_Store
